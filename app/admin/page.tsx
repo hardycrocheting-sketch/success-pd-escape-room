@@ -42,6 +42,7 @@ const emptyMission = {
   geniallyUrl: '',
   correctAnswer: '',
   points: 100,
+  bonusCodesText: '',
   hintsText: '',
   bonusPrompt: '',
   locked: false,
@@ -130,6 +131,7 @@ export default function AdminPage() {
       geniallyUrl: mission.geniallyUrl,
       correctAnswer: mission.correctAnswer,
       points: mission.points || 100,
+      bonusCodesText: (mission.bonusCodes || []).map((bonus) => `${bonus.code}, ${bonus.points}${bonus.label ? `, ${bonus.label}` : ''}`).join('\n'),
       hintsText: (mission.hints || []).join('\n'),
       bonusPrompt: mission.bonusPrompt || '',
       locked: Boolean(mission.locked),
@@ -152,6 +154,7 @@ export default function AdminPage() {
       geniallyUrl: missionForm.geniallyUrl.trim(),
       correctAnswer: missionForm.correctAnswer.trim().toUpperCase(),
       points: Number(missionForm.points) || 100,
+      bonusCodes: parseBonusCodes(missionForm.bonusCodesText),
       hints: missionForm.hintsText.split('\n').map((hint) => hint.trim()).filter(Boolean).slice(0, 3),
       bonusPrompt: missionForm.bonusPrompt.trim(),
       locked: missionForm.locked,
@@ -251,7 +254,8 @@ export default function AdminPage() {
         score: 0,
         bonusPoints: 0,
         hintsUsed: {},
-        missionStartedAt: { 1: new Date() },
+        claimedBonusCodes: {},
+        missionStartedAt: {},
         missionCompletedAt: {},
         elapsedSeconds: 0,
         createdAt: new Date(),
@@ -391,7 +395,7 @@ export default function AdminPage() {
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#54616b]">Mission {mission.id}</p>
                         <h3 className="font-semibold text-[#26333d]">{mission.title}</h3>
-                        <p className="mt-1 text-sm text-[#54616b]">{mission.points || 100} pts | {mission.hints?.length || 0} hints</p>
+                        <p className="mt-1 text-sm text-[#54616b]">{mission.points || 100} pts | {mission.hints?.length || 0} hints | {mission.bonusCodes?.length || 0} bonus codes</p>
                       </div>
                       <div className="flex gap-2">
                         {mission.locked && <Badge className="bg-[#fad714] text-[#26333d] hover:bg-[#fad714]"><Lock className="mr-1 h-3 w-3" />Locked</Badge>}
@@ -645,7 +649,7 @@ function MissionForm({
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">
-          <Label>Correct Answer</Label>
+          <Label>Recovery Code (Finish Mission)</Label>
           <Input value={form.correctAnswer} onChange={(event) => update('correctAnswer', event.target.value.toUpperCase())} />
         </div>
         <div className="space-y-2">
@@ -656,6 +660,11 @@ function MissionForm({
       <div className="space-y-2">
         <Label>Hints, One Per Line</Label>
         <Textarea value={form.hintsText} onChange={(event) => update('hintsText', event.target.value)} placeholder="Hint 1&#10;Hint 2&#10;Hint 3" />
+      </div>
+      <div className="space-y-2">
+        <Label>Bonus Codes, One Per Line</Label>
+        <Textarea value={form.bonusCodesText} onChange={(event) => update('bonusCodesText', event.target.value)} placeholder="BONUS10, 10, Found all documents&#10;EMPATHY15, 15, Rewrote outreach message" />
+        <p className="text-xs text-[#54616b]">Format: code, points, optional label. Teams enter these on the mission page to claim bonus points.</p>
       </div>
       <div className="space-y-2">
         <Label>Bonus Prompt</Label>
@@ -684,4 +693,22 @@ function MissionForm({
       </div>
     </div>
   );
+}
+
+function parseBonusCodes(value: string) {
+  return value
+    .split('\n')
+    .map((line) => {
+      const [rawCode, rawPoints, ...labelParts] = line.split(',');
+      const code = rawCode?.trim().toUpperCase();
+      const points = Number(rawPoints?.trim());
+      if (!code || !Number.isFinite(points) || points <= 0) return null;
+
+      return {
+        code,
+        points,
+        label: labelParts.join(',').trim(),
+      };
+    })
+    .filter((bonus): bonus is { code: string; points: number; label: string } => Boolean(bonus));
 }
