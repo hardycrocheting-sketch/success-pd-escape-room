@@ -14,10 +14,11 @@ import {
   deleteDoc,
   increment,
   limit,
+  runTransaction,
 } from 'firebase/firestore';
 import type { DocumentData } from 'firebase/firestore';
 import { db } from './firebase';
-import type { Team, Mission, Alert, HintRequest, ScheduledAlert, AppSettings } from './types';
+import type { Team, Mission, Alert, HintRequest, ScheduledAlert, AppSettings, BonusCode } from './types';
 
 function normalizeNumber(value: unknown, fallback: number): number {
   const numberValue = typeof value === 'number' ? value : Number(value);
@@ -53,6 +54,34 @@ function normalizeNumberMap(value: unknown): Record<string, number> {
   }, {});
 }
 
+function normalizeStringArrayMap(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object') return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, string[]>>((acc, [key, item]) => {
+    acc[key] = Array.isArray(item) ? item.map(String) : [];
+    return acc;
+  }, {});
+}
+
+function normalizeBonusCodes(value: unknown): BonusCode[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const data = item as Record<string, unknown>;
+      const code = typeof data.code === 'string' ? data.code.trim().toUpperCase() : '';
+      if (!code) return null;
+
+      return {
+        code,
+        points: normalizeNumber(data.points, 0),
+        label: typeof data.label === 'string' ? data.label : '',
+      };
+    })
+    .filter((code): code is BonusCode => Boolean(code));
+}
+
 function serializeDateMap(value: Record<string, Date> | undefined): Record<string, Timestamp> {
   if (!value) return {};
 
@@ -79,6 +108,7 @@ function mapTeamDocument(docData: { id: string; data: () => DocumentData | undef
     score: normalizeNumber(data.score, 0),
     bonusPoints: normalizeNumber(data.bonusPoints, 0),
     hintsUsed: normalizeNumberMap(data.hintsUsed),
+    claimedBonusCodes: normalizeStringArrayMap(data.claimedBonusCodes),
     missionStartedAt: normalizeDateMap(data.missionStartedAt),
     missionCompletedAt: normalizeDateMap(data.missionCompletedAt),
     elapsedSeconds: normalizeNumber(data.elapsedSeconds, 0),
@@ -101,6 +131,7 @@ function mapMissionDocument(docData: { id: string; data: () => DocumentData | un
     hints: Array.isArray(data.hints) ? data.hints.filter((hint) => typeof hint === 'string') : data.hint ? [String(data.hint)] : [],
     hint: typeof data.hint === 'string' ? data.hint : undefined,
     points: normalizeNumber(data.points, 100),
+    bonusCodes: normalizeBonusCodes(data.bonusCodes),
     bonusPrompt: typeof data.bonusPrompt === 'string' ? data.bonusPrompt : '',
     locked: Boolean(data.locked),
     unlockAt: normalizeDate(data.unlockAt),
@@ -158,7 +189,8 @@ export async function createTeam(team: Omit<Team, 'id'>): Promise<string> {
     color: team.color || null,
     bonusPoints: team.bonusPoints || 0,
     hintsUsed: team.hintsUsed || {},
-    missionStartedAt: serializeDateMap(team.missionStartedAt || { 1: team.createdAt }),
+    claimedBonusCodes: team.claimedBonusCodes || {},
+    missionStartedAt: serializeDateMap(team.missionStartedAt),
     missionCompletedAt: serializeDateMap(team.missionCompletedAt),
     elapsedSeconds: team.elapsedSeconds || 0,
     createdAt: Timestamp.fromDate(team.createdAt),
@@ -208,7 +240,8 @@ export async function registerTeam(
     score: 0,
     bonusPoints: 0,
     hintsUsed: {},
-    missionStartedAt: { 1: new Date() },
+    claimedBonusCodes: {},
+    missionStartedAt: {},
     missionCompletedAt: {},
     elapsedSeconds: 0,
     createdAt: new Date(),
@@ -234,13 +267,50 @@ export async function updateTeamProgress(
 
   if (missionCompletedAt) payload.missionCompletedAt = serializeDateMap(missionCompletedAt);
   if (typeof elapsedSeconds === 'number') payload.elapsedSeconds = normalizeNumber(elapsedSeconds, 0);
-  if (currentMission) payload[`missionStartedAt.${currentMission}`] = Timestamp.fromDate(new Date());
 
   await updateDoc(teamRef, payload);
 }
 
+export async function completeTeamMission(team: Team, mission: Mission): Promise<void> {
+  const teamRef = doc(db, 'teams', team.id);
+
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(teamRef);
+    const data = snapshot.data() || {};
+    const completedMissions = Array.isArray(data.completedMissions)
+      ? data.completedMissions.map((missionId) => normalizeNumber(missionId, 0)).filter(Boolean)
+      : [];
+    const alreadyCompleted = completedMissions.includes(mission.id);
+    const completedAt = new Date();
+    const startedAt = normalizeDate(data.missionStartedAt?.[String(mission.id)]) || completedAt;
+    const addedSeconds = alreadyCompleted ? 0 : Math.max(0, Math.floor((completedAt.getTime() - startedAt.getTime()) / 1000));
+
+    transaction.update(teamRef, {
+      currentMission: normalizeNumber(mission.nextMissionId || mission.id, mission.id),
+      completedMissions: Array.from(new Set([...completedMissions, mission.id])),
+      score: normalizeNumber(data.score, 0) + (alreadyCompleted ? 0 : normalizeNumber(mission.points, 100)),
+      elapsedSeconds: normalizeNumber(data.elapsedSeconds, 0) + addedSeconds,
+      [`missionCompletedAt.${mission.id}`]: Timestamp.fromDate(completedAt),
+    });
+  });
+}
+
+export async function startTeamMission(team: Team, missionId: number): Promise<void> {
+  if (team.missionStartedAt?.[String(missionId)]) return;
+
+  const teamRef = doc(db, 'teams', team.id);
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(teamRef);
+    const data = snapshot.data();
+    if (data?.missionStartedAt?.[String(missionId)]) return;
+
+    transaction.update(teamRef, {
+      [`missionStartedAt.${missionId}`]: Timestamp.fromDate(new Date()),
+    });
+  });
+}
+
 export async function resetTeamGame(teamId: string): Promise<void> {
-  const now = new Date();
   const teamRef = doc(db, 'teams', teamId);
   await updateDoc(teamRef, {
     currentMission: 1,
@@ -248,10 +318,61 @@ export async function resetTeamGame(teamId: string): Promise<void> {
     score: 0,
     bonusPoints: 0,
     hintsUsed: {},
-    missionStartedAt: { 1: Timestamp.fromDate(now) },
+    claimedBonusCodes: {},
+    missionStartedAt: {},
     missionCompletedAt: {},
     elapsedSeconds: 0,
   });
+}
+
+export async function claimMissionBonusCode(team: Team, mission: Mission, submittedCode: string): Promise<{ success: boolean; points?: number; label?: string; error?: string }> {
+  const code = submittedCode.trim().toUpperCase();
+  if (!code) return { success: false, error: 'Enter a bonus code.' };
+
+  const matchingBonus = mission.bonusCodes?.find((bonus) => bonus.code.toUpperCase() === code);
+  if (!matchingBonus) return { success: false, error: 'That bonus code was not recognized for this mission.' };
+
+  const missionKey = String(mission.id);
+  const claimedForMission = team.claimedBonusCodes?.[missionKey] || [];
+  if (claimedForMission.includes(code)) {
+    return { success: false, error: 'Your team already claimed that bonus code.' };
+  }
+
+  const points = normalizeNumber(matchingBonus.points, 0);
+  if (points <= 0) return { success: false, error: 'This bonus code does not have points configured.' };
+
+  const teamRef = doc(db, 'teams', team.id);
+  const transactionResult = await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(teamRef);
+    const data = snapshot.data() || {};
+    const currentClaimed = Array.isArray(data.claimedBonusCodes?.[missionKey])
+      ? data.claimedBonusCodes[missionKey].map(String)
+      : [];
+
+    if (currentClaimed.includes(code)) {
+      return { success: false as const, error: 'Your team already claimed that bonus code.' };
+    }
+
+    transaction.update(teamRef, {
+      score: normalizeNumber(data.score, 0) + points,
+      bonusPoints: normalizeNumber(data.bonusPoints, 0) + points,
+      [`claimedBonusCodes.${missionKey}`]: [...currentClaimed, code],
+    });
+
+    return { success: true as const };
+  });
+
+  if (!transactionResult.success) return transactionResult;
+
+  await sendAlert({
+    teamId: team.id,
+    message: `Bonus approved: +${points} points for ${mission.title}${matchingBonus.label ? ` (${matchingBonus.label})` : ''}.`,
+    type: 'success',
+    timestamp: new Date(),
+    read: false,
+  });
+
+  return { success: true, points, label: matchingBonus.label };
 }
 
 export async function awardTeamBonus(team: Team, points: number): Promise<void> {
@@ -559,6 +680,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'SUPPORTED',
       hints: ['Think about what families should feel during enrollment.', 'The emotional takeaway says families need this.', 'The answer is SUPPORTED.'],
+      bonusCodes: [
+        { code: 'DOCS10', points: 10, label: 'Located all enrollment documents' },
+      ],
       points: 100,
       nextMissionId: 2,
     },
@@ -570,6 +694,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'RECONNECT',
       hints: ['The mission is about bringing the student back into school.', 'The support plan should help the student do this.', 'The answer is RECONNECT.'],
+      bonusCodes: [
+        { code: 'LOGIN10', points: 10, label: 'Identified the login pattern' },
+      ],
       points: 100,
       nextMissionId: 3,
     },
@@ -581,6 +708,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'CONNECTION',
       hints: ['The emotional takeaway gives the key idea.', 'This word changes outcomes.', 'The answer is CONNECTION.'],
+      bonusCodes: [
+        { code: 'TRUST10', points: 10, label: 'Rebuilt the communication timeline' },
+      ],
       points: 100,
       nextMissionId: 4,
     },
@@ -592,6 +722,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'FLEXIBILITY',
       hints: ['The student needs options that fit real life.', 'The emotional takeaway names the key support.', 'The answer is FLEXIBILITY.'],
+      bonusCodes: [
+        { code: 'PLAN10', points: 10, label: 'Created a flexible weekly plan' },
+      ],
       points: 100,
       nextMissionId: 5,
     },
@@ -603,6 +736,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'HOPE',
       hints: ['This comes before academics in the emotional takeaway.', 'It is what the student needs to believe graduation is possible.', 'The answer is HOPE.'],
+      bonusCodes: [
+        { code: 'CREDITS10', points: 10, label: 'Built a credit recovery timeline' },
+      ],
       points: 100,
       nextMissionId: 6,
     },
@@ -614,6 +750,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'BARRIERS',
       hints: ['Attendance is not usually the root problem.', 'The mission asks you to investigate what is underneath.', 'The answer is BARRIERS.'],
+      bonusCodes: [
+        { code: 'PATTERN10', points: 10, label: 'Found the attendance pattern' },
+      ],
       points: 100,
       nextMissionId: 7,
     },
@@ -625,6 +764,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'TEAMWORK',
       hints: ['This mission brings every department together.', 'The emotional takeaway names what student success requires.', 'The answer is TEAMWORK.'],
+      bonusCodes: [
+        { code: 'ROLES15', points: 15, label: 'Assigned realistic team roles' },
+      ],
       points: 125,
       nextMissionId: 8,
     },
@@ -636,6 +778,9 @@ export async function initializeSampleData(): Promise<void> {
       geniallyUrl: '',
       correctAnswer: 'CHANGESLIVES',
       hints: ['The final emotional takeaway gives the phrase.', 'Use the last two words with no space.', 'The answer is CHANGESLIVES.'],
+      bonusCodes: [
+        { code: 'APPROVED20', points: 20, label: 'Completed final graduation approvals' },
+      ],
       points: 150,
       nextMissionId: null,
     },
