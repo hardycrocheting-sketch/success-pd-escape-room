@@ -101,6 +101,16 @@ export default function AdminPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const processSchedule = () => {
+      fetch('/api/process-scheduled').catch(() => undefined);
+    };
+
+    processSchedule();
+    const interval = window.setInterval(processSchedule, 60000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   async function loadMissions() {
     try {
       const missionList = await getAllMissions();
