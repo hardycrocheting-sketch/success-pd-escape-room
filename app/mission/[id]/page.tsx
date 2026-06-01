@@ -2,11 +2,11 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, HelpCircle, Loader2, Lock, Send, ShieldAlert, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
-import { getMission, requestMissionHint, updateTeamProgress } from '@/lib/firebase-utils';
+import { claimMissionBonusCode, completeTeamMission, getMission, requestMissionHint, startTeamMission } from '@/lib/firebase-utils';
 import type { Mission } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,9 +27,12 @@ export default function MissionPage() {
   const [mission, setMission] = useState<Mission | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [answer, setAnswer] = useState('');
+  const [bonusCode, setBonusCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmittingBonus, setIsSubmittingBonus] = useState(false);
   const [isRequestingHint, setIsRequestingHint] = useState(false);
   const [feedback, setFeedback] = useState<'correct' | 'incorrect' | null>(null);
+  const [openedAt, setOpenedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     if (!teamLoading && !session) router.push('/');
@@ -47,11 +50,19 @@ export default function MissionPage() {
   const hintsUsed = team?.hintsUsed?.[String(missionId)] || 0;
   const hintLimit = Math.min(3, mission?.hints?.length || (mission?.hint ? 1 : 0));
   const canAskForHint = Boolean(team && mission && !isCompleted && !locked && hintsUsed < hintLimit);
+  const claimedBonusCodes = team?.claimedBonusCodes?.[String(missionId)] || [];
+  const availableBonusCount = mission?.bonusCodes?.length || 0;
 
-  const missionStart = useMemo(() => {
-    if (!team) return new Date();
-    return team.missionStartedAt?.[String(missionId)] || team.createdAt || new Date();
-  }, [missionId, team]);
+  useEffect(() => {
+    if (!team || !mission || locked || isCompleted) return;
+    if (team.missionStartedAt?.[String(missionId)] || openedAt) return;
+
+    const now = new Date();
+    setOpenedAt(now);
+    startTeamMission(team, missionId).catch((error) => {
+      console.error('Mission start error:', error);
+    });
+  }, [isCompleted, locked, mission, missionId, openedAt, team]);
 
   const handleSubmitAnswer = async (event: FormEvent) => {
     event.preventDefault();
@@ -70,19 +81,11 @@ export default function MissionPage() {
       return;
     }
 
-    const completedAt = new Date();
-    const completedMissions = Array.from(new Set([...(team.completedMissions || []), mission.id]));
-    const missionCompletedAt = {
-      ...(team.missionCompletedAt || {}),
-      [String(mission.id)]: completedAt,
-    };
-    const addedSeconds = Math.max(0, Math.floor((completedAt.getTime() - missionStart.getTime()) / 1000));
-    const elapsedSeconds = (team.elapsedSeconds || 0) + (isCompleted ? 0 : addedSeconds);
-    const nextMission = mission.nextMissionId || mission.id;
-    const score = team.score + (isCompleted ? 0 : mission.points || 100);
-
     try {
-      await updateTeamProgress(team.id, nextMission, completedMissions, score, missionCompletedAt, elapsedSeconds);
+      if (!team.missionStartedAt?.[String(mission.id)]) {
+        await startTeamMission(team, mission.id);
+      }
+      await completeTeamMission(team, mission);
       setFeedback('correct');
       toast.success('Mission complete. Student support plan submitted.');
       window.setTimeout(() => {
@@ -114,6 +117,28 @@ export default function MissionPage() {
       toast.error('Hint request failed.');
     } finally {
       setIsRequestingHint(false);
+    }
+  };
+
+  const handleSubmitBonusCode = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!mission || !team || !bonusCode.trim()) return;
+
+    setIsSubmittingBonus(true);
+    try {
+      const result = await claimMissionBonusCode(team, mission, bonusCode);
+      if (!result.success) {
+        toast.error(result.error || 'Bonus code could not be claimed.');
+        return;
+      }
+
+      setBonusCode('');
+      toast.success(`Bonus claimed: +${result.points} points.`);
+    } catch (error) {
+      console.error('Bonus code error:', error);
+      toast.error('Bonus code could not be submitted.');
+    } finally {
+      setIsSubmittingBonus(false);
     }
   };
 
@@ -184,6 +209,31 @@ export default function MissionPage() {
                   <strong>Bonus Task:</strong> {mission.bonusPrompt}
                 </div>
               )}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
+            <div className="border-b border-[#d9e1e6] bg-[#f8fafb] px-4 py-3">
+              <h2 className="font-semibold text-[#26333d]">Submit Bonus Code</h2>
+            </div>
+            <div className="space-y-3 p-4">
+              <p className="text-sm text-[#54616b]">
+                If Genially reveals a bonus code, enter it here. Each bonus code can only be claimed once per team.
+              </p>
+              <div className="text-sm font-semibold text-[#3b4f5f]">Claimed: {claimedBonusCodes.length}/{availableBonusCount}</div>
+              <form onSubmit={handleSubmitBonusCode} className="space-y-3">
+                <Input
+                  value={bonusCode}
+                  onChange={(event) => setBonusCode(event.target.value.toUpperCase())}
+                  className="h-11 text-center font-mono uppercase tracking-[0.16em]"
+                  placeholder="BONUS CODE"
+                  disabled={isSubmittingBonus || availableBonusCount === 0}
+                />
+                <Button type="submit" variant="outline" className="h-11 w-full border-[#b7c3cb]" disabled={!bonusCode.trim() || isSubmittingBonus || availableBonusCount === 0}>
+                  {isSubmittingBonus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                  Claim Bonus Points
+                </Button>
+              </form>
             </div>
           </div>
 
