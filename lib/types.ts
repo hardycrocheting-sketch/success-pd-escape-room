@@ -10,10 +10,17 @@ export interface Team {
   score: number;
   bonusPoints?: number;
   hintsUsed?: Record<string, number>;
+  claimedBonusCodes?: Record<string, string[]>;
   missionStartedAt?: Record<string, Date>;
   missionCompletedAt?: Record<string, Date>;
   elapsedSeconds?: number;
   createdAt: Date;
+}
+
+export interface BonusCode {
+  code: string;
+  points: number;
+  label?: string;
 }
 
 export interface Mission {
@@ -27,6 +34,7 @@ export interface Mission {
   hints?: string[];
   hint?: string;
   points?: number;
+  bonusCodes?: BonusCode[];
   bonusPrompt?: string;
   locked?: boolean;
   unlockAt?: Date | null;
