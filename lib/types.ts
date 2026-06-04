@@ -1,14 +1,38 @@
+export const TEAM_ROLES = ['investigator', 'analyst', 'communicator', 'pathfinder'] as const;
+
+export type TeamRole = typeof TEAM_ROLES[number];
+
+export const ROLE_LABELS: Record<TeamRole, string> = {
+  investigator: 'Investigator',
+  analyst: 'Analyst',
+  communicator: 'Communicator',
+  pathfinder: 'Pathfinder',
+};
+
+export interface TeamMember {
+  name: string;
+  role: TeamRole;
+}
+
+export interface RoleProgress {
+  completed: boolean;
+  points: number;
+  codePiece?: string;
+  completedAt?: Date;
+}
+
 export interface Team {
   id: string;
   name: string;
   code: string;
   captainName?: string;
-  members?: string[];
+  members?: TeamMember[];
   color?: string | null;
   currentMission: number;
   completedMissions: number[];
   score: number;
   bonusPoints?: number;
+  roleProgress?: Record<string, Partial<Record<TeamRole, RoleProgress>>>;
   hintsUsed?: Record<string, number>;
   claimedBonusCodes?: Record<string, string[]>;
   missionStartedAt?: Record<string, Date>;
@@ -18,9 +42,12 @@ export interface Team {
 }
 
 export interface BonusCode {
+  id: string;
+  missionId: number;
   code: string;
   points: number;
   label?: string;
+  createdAt?: Date;
 }
 
 export interface Mission {
@@ -31,14 +58,27 @@ export interface Mission {
   geniallyUrl: string;
   correctAnswer: string;
   answerKey?: string; // Alternative to correctAnswer
-  hints?: string[];
-  hint?: string;
   points?: number;
-  bonusCodes?: BonusCode[];
   bonusPrompt?: string;
   locked?: boolean;
   unlockAt?: Date | null;
   nextMissionId: number | null;
+}
+
+export interface RoleTask {
+  id: string;
+  missionId: number;
+  role: TeamRole;
+  title: string;
+  instructions: string;
+  geniallyUrl: string;
+  taskCode: string;
+  codePiece: string;
+  points: number;
+  hint: string;
+  bonusCode: string;
+  bonusPoints: number;
+  createdAt?: Date;
 }
 
 export interface Alert {
@@ -83,4 +123,5 @@ export interface TeamSession {
   teamId: string;
   teamName: string;
   teamCode: string;
+  role?: TeamRole | 'captain';
 }

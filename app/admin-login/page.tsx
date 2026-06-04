@@ -63,7 +63,7 @@ function AdminLoginForm() {
 
         <div className="rounded-md border border-[#c8d2d9] bg-white shadow-[0_18px_55px_rgba(59,79,95,0.14)]">
           <div className="border-b border-[#d9e1e6] bg-[#f8fafb] p-6 text-center">
-            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={240} height={76} className="mx-auto" priority />
+            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={240} height={76} className="mx-auto h-auto w-48 sm:w-[240px]" priority />
             <div className="mx-auto mt-6 flex h-12 w-12 items-center justify-center rounded bg-[#3b4f5f] text-white">
               <LockKeyhole className="h-6 w-6" />
             </div>

@@ -3,11 +3,12 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useState } from 'react';
-import { ArrowLeft, CheckCircle2, HelpCircle, Loader2, Lock, Send, ShieldAlert, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, Lock, Send, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
-import { claimMissionBonusCode, completeTeamMission, getMission, requestMissionHint, startTeamMission } from '@/lib/firebase-utils';
-import type { Mission } from '@/lib/types';
+import { completeTeamMissionFromRoleProgress, getMission, subscribeToMissionRoleTasks } from '@/lib/firebase-utils';
+import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
+import type { Mission, RoleTask } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,14 +26,10 @@ export default function MissionPage() {
   const missionId = Number(params.id);
   const { session, team, isLoading: teamLoading } = useTeam();
   const [mission, setMission] = useState<Mission | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [roleTasks, setRoleTasks] = useState<RoleTask[]>([]);
   const [answer, setAnswer] = useState('');
-  const [bonusCode, setBonusCode] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSubmittingBonus, setIsSubmittingBonus] = useState(false);
-  const [isRequestingHint, setIsRequestingHint] = useState(false);
-  const [feedback, setFeedback] = useState<'correct' | 'incorrect' | null>(null);
-  const [openedAt, setOpenedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     if (!teamLoading && !session) router.push('/');
@@ -45,100 +42,37 @@ export default function MissionPage() {
       .finally(() => setIsLoading(false));
   }, [missionId]);
 
+  useEffect(() => {
+    return subscribeToMissionRoleTasks(missionId, setRoleTasks);
+  }, [missionId]);
+
   const isCompleted = Boolean(team?.completedMissions?.includes(missionId));
   const locked = missionIsLocked(mission) || Boolean(team && missionId !== team.currentMission && !isCompleted);
-  const hintsUsed = team?.hintsUsed?.[String(missionId)] || 0;
-  const hintLimit = Math.min(3, mission?.hints?.length || (mission?.hint ? 1 : 0));
-  const canAskForHint = Boolean(team && mission && !isCompleted && !locked && hintsUsed < hintLimit);
-  const claimedBonusCodes = team?.claimedBonusCodes?.[String(missionId)] || [];
-  const availableBonusCount = mission?.bonusCodes?.length || 0;
-
-  useEffect(() => {
-    if (!team || !mission || locked || isCompleted) return;
-    if (team.missionStartedAt?.[String(missionId)] || openedAt) return;
-
-    const now = new Date();
-    setOpenedAt(now);
-    startTeamMission(team, missionId).catch((error) => {
-      console.error('Mission start error:', error);
-    });
-  }, [isCompleted, locked, mission, missionId, openedAt, team]);
+  const roleProgress = team?.roleProgress?.[String(missionId)] || {};
+  const allRolesComplete = TEAM_ROLES.every((role) => roleProgress[role]?.completed);
 
   const handleSubmitAnswer = async (event: FormEvent) => {
     event.preventDefault();
-    if (!mission || !team || !session || !answer.trim()) return;
-
-    const expectedAnswer = (mission.answerKey || mission.correctAnswer || '').trim().toUpperCase();
-    const submittedAnswer = answer.trim().toUpperCase();
+    if (!mission || !team || !answer.trim()) return;
 
     setIsSubmitting(true);
-    setFeedback(null);
-
-    if (submittedAnswer !== expectedAnswer) {
-      setFeedback('incorrect');
-      toast.error('Incorrect answer. No penalty, keep investigating.');
-      setIsSubmitting(false);
-      return;
-    }
-
     try {
-      if (!team.missionStartedAt?.[String(mission.id)]) {
-        await startTeamMission(team, mission.id);
+      const result = await completeTeamMissionFromRoleProgress(team, mission, answer);
+      if (!result.success) {
+        toast.error(result.error || 'Mission could not be completed.');
+        return;
       }
-      await completeTeamMission(team, mission);
-      setFeedback('correct');
-      toast.success('Mission complete. Student support plan submitted.');
+
+      toast.success('Mission complete. Team score posted.');
       window.setTimeout(() => {
-        if (mission.nextMissionId) router.push(`/mission/${mission.nextMissionId}`);
+        if (mission.nextMissionId) router.push('/dashboard');
         else router.push('/dashboard');
-      }, 1200);
+      }, 900);
     } catch (error) {
-      console.error('Progress update error:', error);
-      toast.error('Correct answer, but progress could not be saved.');
+      console.error('Team mission submit error:', error);
+      toast.error('Mission progress could not be saved.');
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handleHintRequest = async () => {
-    if (!team || !mission) return;
-
-    setIsRequestingHint(true);
-    try {
-      const result = await requestMissionHint(team, mission);
-      if (!result.success) {
-        toast.error(result.error || 'Hint request could not be created.');
-        return;
-      }
-
-      toast.success('Hint requested. 5 points deducted. Watch News Alerts for the Game Master response.');
-    } catch (error) {
-      console.error('Hint request error:', error);
-      toast.error('Hint request failed.');
-    } finally {
-      setIsRequestingHint(false);
-    }
-  };
-
-  const handleSubmitBonusCode = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!mission || !team || !bonusCode.trim()) return;
-
-    setIsSubmittingBonus(true);
-    try {
-      const result = await claimMissionBonusCode(team, mission, bonusCode);
-      if (!result.success) {
-        toast.error(result.error || 'Bonus code could not be claimed.');
-        return;
-      }
-
-      setBonusCode('');
-      toast.success(`Bonus claimed: +${result.points} points.`);
-    } catch (error) {
-      console.error('Bonus code error:', error);
-      toast.error('Bonus code could not be submitted.');
-    } finally {
-      setIsSubmittingBonus(false);
     }
   };
 
@@ -161,7 +95,7 @@ export default function MissionPage() {
   return (
     <main className="min-h-screen bg-[#edf2f5] text-[#26333d]">
       <header className="border-b border-[#c8d2d9] bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
           <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm font-semibold text-[#3b4f5f] hover:text-[#ff7a2a]">
             <ArrowLeft className="h-4 w-4" />
             Mission Control
@@ -170,123 +104,66 @@ export default function MissionPage() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 lg:grid-cols-[1fr_360px]">
+      <div className="mx-auto grid max-w-7xl gap-4 px-3 py-4 sm:px-4 sm:py-5 lg:grid-cols-[1fr_360px]">
         <section className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
-          <div className="border-b border-[#d9e1e6] bg-[#f8fafb] p-5">
+          <div className="border-b border-[#d9e1e6] bg-[#f8fafb] p-4 sm:p-5">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="border-[#3b4f5f] text-[#3b4f5f]">Mission {mission.id}</Badge>
               {isCompleted && <Badge className="bg-[#5ba300] text-white hover:bg-[#5ba300]">Completed</Badge>}
-              <Badge className="bg-[#ff7a2a] text-white hover:bg-[#ff7a2a]">{mission.points || 100} pts</Badge>
+              <Badge className="bg-[#ff7a2a] text-white hover:bg-[#ff7a2a]">{mission.points || 100} team pts</Badge>
             </div>
-            <h1 className="mt-3 text-3xl font-semibold text-[#26333d]">{mission.title}</h1>
+            <h1 className="mt-3 text-2xl font-semibold text-[#26333d] sm:text-3xl">{mission.title}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[#54616b]">{mission.description}</p>
           </div>
 
-          <div className="p-5">
-            <div className="aspect-video overflow-hidden rounded-md border border-[#c8d2d9] bg-[#101820]">
-              {mission.geniallyUrl ? (
-                <iframe src={mission.geniallyUrl} className="h-full w-full" allowFullScreen title={mission.title} />
-              ) : (
-                <div className="flex h-full flex-col items-center justify-center p-6 text-center text-slate-200">
-                  <ShieldAlert className="mb-4 h-12 w-12 text-[#fad714]" />
-                  <p className="font-semibold">Mission room is awaiting its embedded activity.</p>
-                  <p className="mt-2 text-sm text-slate-400">Add a Genially or activity URL in the Game Master Console.</p>
+          <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">
+            {TEAM_ROLES.map((role) => {
+              const progress = roleProgress[role];
+              const task = roleTasks.find((item) => item.role === role);
+              return (
+                <div key={role} className="rounded-md border border-[#d6e0e6] bg-[#f8fafb] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#54616b]">{ROLE_LABELS[role]}</p>
+                      <h2 className="mt-1 font-semibold text-[#26333d]">{task?.title || `${ROLE_LABELS[role]} Task`}</h2>
+                    </div>
+                    {progress?.completed ? <CheckCircle2 className="h-5 w-5 text-[#5ba300]" /> : <Lock className="h-5 w-5 text-[#ff7a2a]" />}
+                  </div>
+                  <p className="mt-3 text-sm text-[#54616b]">{progress?.completed ? `Code piece: ${progress.codePiece || 'posted'}` : 'Waiting for this role to finish.'}</p>
+                  <Link href={`/mission/${mission.id}/role/${role}`}>
+                    <Button variant="outline" className="mt-4 w-full border-[#b7c3cb]">
+                      Open {ROLE_LABELS[role]}
+                    </Button>
+                  </Link>
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
         </section>
 
         <aside className="space-y-5">
           <div className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
             <div className="border-b border-[#d9e1e6] bg-[#f8fafb] px-4 py-3">
-              <h2 className="font-semibold text-[#26333d]">Mission Briefing</h2>
+              <h2 className="font-semibold text-[#26333d]">Captain Submission</h2>
             </div>
             <div className="space-y-4 p-4">
-              <p className="text-sm leading-6 text-[#54616b]">{mission.storyContext || 'Review the student scenario, complete the case task, and submit the answer code.'}</p>
-              {mission.bonusPrompt && (
-                <div className="rounded border border-[#fad714] bg-yellow-50 p-3 text-sm text-[#5c4b00]">
-                  <strong>Bonus Task:</strong> {mission.bonusPrompt}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
-            <div className="border-b border-[#d9e1e6] bg-[#f8fafb] px-4 py-3">
-              <h2 className="font-semibold text-[#26333d]">Submit Bonus Code</h2>
-            </div>
-            <div className="space-y-3 p-4">
-              <p className="text-sm text-[#54616b]">
-                If Genially reveals a bonus code, enter it here. Each bonus code can only be claimed once per team.
+              <p className="text-sm leading-6 text-[#54616b]">
+                Once all four roles are complete, combine the role code pieces and submit the assembled team code.
               </p>
-              <div className="text-sm font-semibold text-[#3b4f5f]">Claimed: {claimedBonusCodes.length}/{availableBonusCount}</div>
-              <form onSubmit={handleSubmitBonusCode} className="space-y-3">
+              <form onSubmit={handleSubmitAnswer} className="space-y-4">
                 <Input
-                  value={bonusCode}
-                  onChange={(event) => setBonusCode(event.target.value.toUpperCase())}
-                  className="h-11 text-center font-mono uppercase tracking-[0.16em]"
-                  placeholder="BONUS CODE"
-                  disabled={isSubmittingBonus || availableBonusCount === 0}
+                  value={answer}
+                  onChange={(event) => setAnswer(event.target.value.toUpperCase())}
+                  className="h-12 text-center font-mono text-lg uppercase"
+                  placeholder="TEAM CODE"
+                  disabled={isSubmitting || isCompleted}
                 />
-                <Button type="submit" variant="outline" className="h-11 w-full border-[#b7c3cb]" disabled={!bonusCode.trim() || isSubmittingBonus || availableBonusCount === 0}>
-                  {isSubmittingBonus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                  Claim Bonus Points
+                <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!answer.trim() || isSubmitting || !allRolesComplete || isCompleted}>
+                  {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                  Submit Team Code
                 </Button>
               </form>
-            </div>
-          </div>
-
-          <div className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
-            <div className="border-b border-[#d9e1e6] bg-[#f8fafb] px-4 py-3">
-              <h2 className="font-semibold text-[#26333d]">Submit Recovery Code</h2>
-            </div>
-            <div className="p-4">
-              {isCompleted ? (
-                <div className="rounded border border-green-200 bg-green-50 p-4 text-center text-sm text-[#315c00]">
-                  <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-[#5ba300]" />
-                  Mission already completed.
-                </div>
-              ) : (
-                <form onSubmit={handleSubmitAnswer} className="space-y-4">
-                  <Input
-                    value={answer}
-                    onChange={(event) => {
-                      setAnswer(event.target.value.toUpperCase());
-                      setFeedback(null);
-                    }}
-                    className="h-12 text-center font-mono text-lg uppercase tracking-[0.18em]"
-                    placeholder="ANSWER CODE"
-                    disabled={isSubmitting}
-                  />
-                  {feedback === 'incorrect' && (
-                    <p className="flex items-center justify-center gap-2 text-sm text-destructive">
-                      <XCircle className="h-4 w-4" />
-                      Incorrect. Try again.
-                    </p>
-                  )}
-                  <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!answer.trim() || isSubmitting}>
-                    {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                    Submit Answer
-                  </Button>
-                </form>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
-            <div className="border-b border-[#d9e1e6] bg-[#f8fafb] px-4 py-3">
-              <h2 className="font-semibold text-[#26333d]">Hint Request</h2>
-            </div>
-            <div className="space-y-3 p-4">
-              <p className="text-sm text-[#54616b]">
-                Hints are approved by the Game Master and delivered through News Alerts. Each request costs 5 points.
-              </p>
-              <div className="text-sm font-semibold text-[#3b4f5f]">Hints used: {hintsUsed}/{hintLimit || 0}</div>
-              <Button type="button" variant="outline" className="h-11 w-full border-[#b7c3cb]" disabled={!canAskForHint || isRequestingHint} onClick={handleHintRequest}>
-                {isRequestingHint ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <HelpCircle className="mr-2 h-4 w-4" />}
-                Request Hint (-5 pts)
-              </Button>
+              {!allRolesComplete && <p className="text-xs text-[#54616b]">Waiting for all four roles to finish.</p>}
             </div>
           </div>
         </aside>

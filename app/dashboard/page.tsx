@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useTeam } from '@/lib/team-context';
 import { getAllMissions, subscribeToAllTeams, subscribeToAppSettings } from '@/lib/firebase-utils';
+import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
 import type { Mission, Team } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -106,6 +107,9 @@ export default function DashboardPage() {
   }, [missions, team]);
 
   const locked = isMissionLocked(activeMission);
+  const activeRoleProgress = team?.roleProgress?.[String(team?.currentMission || 1)] || {};
+  const completedRoles = TEAM_ROLES.filter((role) => activeRoleProgress[role]?.completed).length;
+  const rolePath = session?.role && session.role !== 'captain' && activeMission ? `/mission/${activeMission.id}/role/${session.role}` : activeMission ? `/mission/${activeMission.id}` : '/dashboard';
   const totalPossibleCompletions = Math.max(teams.length * missions.length, 1);
   const totalCompleted = teams.reduce((sum, entry) => sum + (entry.completedMissions?.length || 0), 0);
   const redevelopmentPercent = Math.min(100, Math.round((totalCompleted / totalPossibleCompletions) * 100));
@@ -150,7 +154,7 @@ export default function DashboardPage() {
       <header className="sticky top-0 z-40 border-b border-[#c8d2d9] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={214} height={68} priority />
+            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={214} height={68} priority className="h-auto w-36 sm:w-[214px]" />
             <div className="hidden border-l border-[#d6e0e6] pl-3 md:block">
               <p className="text-sm font-bold text-[#3b4f5f]">Mission Control</p>
               <p className="text-xs text-[#54616b]">Graduation Recovery Initiative</p>
@@ -180,7 +184,7 @@ export default function DashboardPage() {
               <FileWarning className="h-4 w-4" />
               Student success case files active
             </div>
-            <h1 className="text-3xl font-bold md:text-5xl">Graduation Recovery Console</h1>
+            <h1 className="text-2xl font-bold md:text-5xl">Graduation Recovery Console</h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-100">
               Work through authentic enrollment, attendance, communication, intervention, and graduation-tracking missions before the next lock window.
             </p>
@@ -221,8 +225,18 @@ export default function DashboardPage() {
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-[#54616b]">
                   {activeMission?.description || 'Ask the Game Master to configure this mission in the admin console.'}
                 </p>
+                <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                  {TEAM_ROLES.map((role) => (
+                    <div key={role} className="rounded border border-[#d6e0e6] bg-[#f8fafb] p-3">
+                      <p className="text-xs font-semibold uppercase text-[#54616b]">{ROLE_LABELS[role]}</p>
+                      <p className={`mt-1 text-sm font-semibold ${activeRoleProgress[role]?.completed ? 'text-[#5ba300]' : 'text-[#3b4f5f]'}`}>
+                        {activeRoleProgress[role]?.completed ? 'Complete' : 'In progress'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
                 <div className="mt-4">
-                  <Progress value={teamCompletionPercent} className="h-3 bg-[#e1e7eb] [&>div]:bg-[#5ba300]" />
+                  <Progress value={(completedRoles / 4) * 100} className="h-3 bg-[#e1e7eb] [&>div]:bg-[#5ba300]" />
                 </div>
               </div>
               <div className="flex flex-col gap-2">
@@ -232,9 +246,9 @@ export default function DashboardPage() {
                     Locked
                   </Badge>
                 )}
-                <Link href={activeMission && !locked ? `/mission/${activeMission.id}` : '/dashboard'} className={activeMission && !locked ? '' : 'pointer-events-none'}>
+                <Link href={activeMission && !locked ? rolePath : '/dashboard'} className={activeMission && !locked ? '' : 'pointer-events-none'}>
                   <Button className="h-12 min-w-44 bg-[#3b4f5f] hover:bg-[#304250]" disabled={!activeMission || locked}>
-                    Open Mission
+                    {session?.role && session.role !== 'captain' ? `Open ${ROLE_LABELS[session.role]} Task` : 'Captain Overview'}
                   </Button>
                 </Link>
               </div>
@@ -346,4 +360,3 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: ElementTy
     </div>
   );
 }
-

@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useRef, useState, useEffect, ReactNode } from 'react';
-import type { TeamSession, Team, Alert } from '@/lib/types';
+import type { TeamSession, Team, Alert, TeamRole } from '@/lib/types';
 import { getTeamByCode, subscribeToTeam, subscribeToAlerts } from '@/lib/firebase-utils';
 
 interface TeamContextType {
@@ -12,7 +12,7 @@ interface TeamContextType {
   isLoading: boolean;
   notificationsAllowed: boolean;
   enableNotifications: () => Promise<{ success: boolean; error?: string }>;
-  login: (code: string) => Promise<{ success: boolean; error?: string }>;
+  login: (code: string, role?: TeamRole | 'captain') => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
 }
 
@@ -93,7 +93,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     });
   }, [alerts]);
 
-  const login = async (code: string): Promise<{ success: boolean; error?: string }> => {
+  const login = async (code: string, role?: TeamRole | 'captain'): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
     try {
       const foundTeam = await getTeamByCode(code.toUpperCase());
@@ -107,6 +107,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         teamId: foundTeam.id,
         teamName: foundTeam.name,
         teamCode: foundTeam.code,
+        role,
       };
 
       setSession(newSession);

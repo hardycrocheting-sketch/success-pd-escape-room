@@ -12,13 +12,13 @@ import {
   onSnapshot,
   Timestamp,
   deleteDoc,
-  increment,
   limit,
   runTransaction,
 } from 'firebase/firestore';
 import type { DocumentData } from 'firebase/firestore';
 import { db } from './firebase';
-import type { Team, Mission, Alert, HintRequest, ScheduledAlert, AppSettings, BonusCode } from './types';
+import { ROLE_LABELS, TEAM_ROLES } from './types';
+import type { Team, Mission, Alert, ScheduledAlert, AppSettings, BonusCode, RoleProgress, RoleTask, TeamMember, TeamRole } from './types';
 
 function normalizeNumber(value: unknown, fallback: number): number {
   const numberValue = typeof value === 'number' ? value : Number(value);
@@ -63,23 +63,49 @@ function normalizeStringArrayMap(value: unknown): Record<string, string[]> {
   }, {});
 }
 
-function normalizeBonusCodes(value: unknown): BonusCode[] {
+function normalizeRole(value: unknown): TeamRole {
+  return TEAM_ROLES.includes(value as TeamRole) ? value as TeamRole : 'investigator';
+}
+
+function normalizeMembers(value: unknown): TeamMember[] {
   if (!Array.isArray(value)) return [];
 
-  return value
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const data = item as Record<string, unknown>;
-      const code = typeof data.code === 'string' ? data.code.trim().toUpperCase() : '';
-      if (!code) return null;
-
+  return value.slice(0, 4).map((item, index) => {
+    if (typeof item === 'string') {
       return {
-        code,
-        points: normalizeNumber(data.points, 0),
-        label: typeof data.label === 'string' ? data.label : '',
+        name: item,
+        role: TEAM_ROLES[index] || 'investigator',
       };
-    })
-    .filter((code): code is BonusCode => Boolean(code));
+    }
+
+    const data = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    return {
+      name: typeof data.name === 'string' ? data.name : '',
+      role: normalizeRole(data.role),
+    };
+  });
+}
+
+function normalizeRoleProgress(value: unknown): Record<string, Partial<Record<TeamRole, RoleProgress>>> {
+  if (!value || typeof value !== 'object') return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, Partial<Record<TeamRole, RoleProgress>>>>((acc, [missionId, item]) => {
+    if (!item || typeof item !== 'object') return acc;
+
+    acc[missionId] = {};
+    Object.entries(item as Record<string, unknown>).forEach(([roleKey, progressValue]) => {
+      if (!TEAM_ROLES.includes(roleKey as TeamRole) || !progressValue || typeof progressValue !== 'object') return;
+      const progress = progressValue as Record<string, unknown>;
+      acc[missionId][roleKey as TeamRole] = {
+        completed: Boolean(progress.completed),
+        points: normalizeNumber(progress.points, 0),
+        codePiece: typeof progress.codePiece === 'string' ? progress.codePiece : '',
+        completedAt: normalizeDate(progress.completedAt) || undefined,
+      };
+    });
+
+    return acc;
+  }, {});
 }
 
 function serializeDateMap(value: Record<string, Date> | undefined): Record<string, Timestamp> {
@@ -99,7 +125,7 @@ function mapTeamDocument(docData: { id: string; data: () => DocumentData | undef
     name: typeof data.name === 'string' ? data.name : 'Unnamed Team',
     code: typeof data.code === 'string' ? data.code : '',
     captainName: typeof data.captainName === 'string' ? data.captainName : undefined,
-    members: Array.isArray(data.members) ? data.members : [],
+    members: normalizeMembers(data.members),
     color: typeof data.color === 'string' ? data.color : null,
     currentMission: normalizeNumber(data.currentMission, 1),
     completedMissions: Array.isArray(data.completedMissions)
@@ -107,11 +133,32 @@ function mapTeamDocument(docData: { id: string; data: () => DocumentData | undef
       : [],
     score: normalizeNumber(data.score, 0),
     bonusPoints: normalizeNumber(data.bonusPoints, 0),
+    roleProgress: normalizeRoleProgress(data.roleProgress),
     hintsUsed: normalizeNumberMap(data.hintsUsed),
     claimedBonusCodes: normalizeStringArrayMap(data.claimedBonusCodes),
     missionStartedAt: normalizeDateMap(data.missionStartedAt),
     missionCompletedAt: normalizeDateMap(data.missionCompletedAt),
     elapsedSeconds: normalizeNumber(data.elapsedSeconds, 0),
+    createdAt: normalizeDate(data.createdAt) || new Date(),
+  };
+}
+
+function mapRoleTaskDocument(docData: { id: string; data: () => DocumentData | undefined }): RoleTask {
+  const data = docData.data() || {};
+
+  return {
+    id: docData.id,
+    missionId: normalizeNumber(data.missionId, 1),
+    role: normalizeRole(data.role),
+    title: typeof data.title === 'string' ? data.title : '',
+    instructions: typeof data.instructions === 'string' ? data.instructions : '',
+    geniallyUrl: typeof data.geniallyUrl === 'string' ? data.geniallyUrl : '',
+    taskCode: typeof data.taskCode === 'string' ? data.taskCode.trim().toUpperCase() : '',
+    codePiece: typeof data.codePiece === 'string' ? data.codePiece.trim().toUpperCase() : '',
+    points: normalizeNumber(data.points, 25),
+    hint: typeof data.hint === 'string' ? data.hint : '',
+    bonusCode: typeof data.bonusCode === 'string' ? data.bonusCode.trim().toUpperCase() : '',
+    bonusPoints: normalizeNumber(data.bonusPoints, 0),
     createdAt: normalizeDate(data.createdAt) || new Date(),
   };
 }
@@ -128,14 +175,24 @@ function mapMissionDocument(docData: { id: string; data: () => DocumentData | un
     geniallyUrl: typeof data.geniallyUrl === 'string' ? data.geniallyUrl : '',
     correctAnswer: typeof data.correctAnswer === 'string' ? data.correctAnswer : '',
     answerKey: typeof data.answerKey === 'string' ? data.answerKey : undefined,
-    hints: Array.isArray(data.hints) ? data.hints.filter((hint) => typeof hint === 'string') : data.hint ? [String(data.hint)] : [],
-    hint: typeof data.hint === 'string' ? data.hint : undefined,
     points: normalizeNumber(data.points, 100),
-    bonusCodes: normalizeBonusCodes(data.bonusCodes),
     bonusPrompt: typeof data.bonusPrompt === 'string' ? data.bonusPrompt : '',
     locked: Boolean(data.locked),
     unlockAt: normalizeDate(data.unlockAt),
     nextMissionId: data.nextMissionId === null || data.nextMissionId === undefined ? null : normalizeNumber(data.nextMissionId, id + 1),
+  };
+}
+
+function mapBonusCodeDocument(docData: { id: string; data: () => DocumentData | undefined }): BonusCode {
+  const data = docData.data() || {};
+
+  return {
+    id: docData.id,
+    missionId: normalizeNumber(data.missionId, 1),
+    code: typeof data.code === 'string' ? data.code.trim().toUpperCase() : '',
+    points: normalizeNumber(data.points, 0),
+    label: typeof data.label === 'string' ? data.label : '',
+    createdAt: normalizeDate(data.createdAt) || new Date(),
   };
 }
 
@@ -188,6 +245,7 @@ export async function createTeam(team: Omit<Team, 'id'>): Promise<string> {
     members: team.members || [],
     color: team.color || null,
     bonusPoints: team.bonusPoints || 0,
+    roleProgress: team.roleProgress || {},
     hintsUsed: team.hintsUsed || {},
     claimedBonusCodes: team.claimedBonusCodes || {},
     missionStartedAt: serializeDateMap(team.missionStartedAt),
@@ -218,7 +276,7 @@ export async function isTeamCodeUnique(code: string): Promise<boolean> {
 export async function registerTeam(
   name: string,
   captainName: string,
-  members: string[],
+  members: TeamMember[],
   color: string | null
 ): Promise<{ teamId: string; teamCode: string }> {
   // Generate unique code
@@ -239,6 +297,7 @@ export async function registerTeam(
     completedMissions: [],
     score: 0,
     bonusPoints: 0,
+    roleProgress: {},
     hintsUsed: {},
     claimedBonusCodes: {},
     missionStartedAt: {},
@@ -259,7 +318,7 @@ export async function updateTeamProgress(
   elapsedSeconds?: number
 ): Promise<void> {
   const teamRef = doc(db, 'teams', teamId);
-  const payload: Record<string, unknown> = {
+  const payload: Record<string, string | number | number[] | Record<string, Timestamp>> = {
     currentMission: normalizeNumber(currentMission, 1),
     completedMissions: completedMissions.map((missionId) => normalizeNumber(missionId, 0)).filter(Boolean),
     score: normalizeNumber(score, 0),
@@ -317,6 +376,7 @@ export async function resetTeamGame(teamId: string): Promise<void> {
     completedMissions: [],
     score: 0,
     bonusPoints: 0,
+    roleProgress: {},
     hintsUsed: {},
     claimedBonusCodes: {},
     missionStartedAt: {},
@@ -329,7 +389,15 @@ export async function claimMissionBonusCode(team: Team, mission: Mission, submit
   const code = submittedCode.trim().toUpperCase();
   if (!code) return { success: false, error: 'Enter a bonus code.' };
 
-  const matchingBonus = mission.bonusCodes?.find((bonus) => bonus.code.toUpperCase() === code);
+  const bonusesRef = collection(db, 'bonusCodes');
+  const bonusQuery = query(
+    bonusesRef,
+    where('missionId', '==', mission.id),
+    where('code', '==', code),
+    limit(1)
+  );
+  const bonusSnapshot = await getDocs(bonusQuery);
+  const matchingBonus = bonusSnapshot.empty ? null : mapBonusCodeDocument(bonusSnapshot.docs[0]);
   if (!matchingBonus) return { success: false, error: 'That bonus code was not recognized for this mission.' };
 
   const missionKey = String(mission.id);
@@ -446,6 +514,169 @@ export async function deleteMission(missionId: number): Promise<void> {
   await deleteDoc(missionRef);
 }
 
+// Role tasks
+export async function getRoleTask(missionId: number, role: TeamRole): Promise<RoleTask | null> {
+  const taskRef = doc(db, 'roleTasks', `${missionId}_${role}`);
+  const snapshot = await getDoc(taskRef);
+  if (!snapshot.exists()) return null;
+  return mapRoleTaskDocument(snapshot);
+}
+
+export function subscribeToRoleTasks(callback: (tasks: RoleTask[]) => void) {
+  const tasksRef = collection(db, 'roleTasks');
+  return onSnapshot(tasksRef, (snapshot) => {
+    const tasks = snapshot.docs
+      .map(mapRoleTaskDocument)
+      .sort((a, b) => {
+        if (a.missionId !== b.missionId) return a.missionId - b.missionId;
+        return TEAM_ROLES.indexOf(a.role) - TEAM_ROLES.indexOf(b.role);
+      });
+    callback(tasks);
+  }, (error) => {
+    console.error('Role task subscription error:', error);
+    callback([]);
+  });
+}
+
+export function subscribeToMissionRoleTasks(missionId: number, callback: (tasks: RoleTask[]) => void) {
+  const tasksRef = collection(db, 'roleTasks');
+  const q = query(tasksRef, where('missionId', '==', missionId));
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map(mapRoleTaskDocument));
+  }, (error) => {
+    console.error('Mission role task subscription error:', error);
+    callback([]);
+  });
+}
+
+export async function upsertRoleTask(task: Omit<RoleTask, 'id' | 'createdAt'>): Promise<void> {
+  const role = normalizeRole(task.role);
+  const taskRef = doc(db, 'roleTasks', `${normalizeNumber(task.missionId, 1)}_${role}`);
+  await setDoc(taskRef, {
+    missionId: normalizeNumber(task.missionId, 1),
+    role,
+    title: task.title.trim(),
+    instructions: task.instructions.trim(),
+    geniallyUrl: task.geniallyUrl.trim(),
+    taskCode: task.taskCode.trim().toUpperCase(),
+    codePiece: task.codePiece.trim().toUpperCase(),
+    points: normalizeNumber(task.points, 25),
+    hint: task.hint.trim(),
+    bonusCode: task.bonusCode.trim().toUpperCase(),
+    bonusPoints: normalizeNumber(task.bonusPoints, 0),
+    createdAt: Timestamp.fromDate(new Date()),
+  }, { merge: true });
+}
+
+export async function submitRoleTask(team: Team, task: RoleTask, submittedCode: string, submittedBonus = ''): Promise<{ success: boolean; points?: number; error?: string }> {
+  const code = submittedCode.trim().toUpperCase();
+  const expected = task.taskCode.trim().toUpperCase();
+  if (!code) return { success: false, error: 'Enter your role task code.' };
+  if (!expected) return { success: false, error: 'This role does not have a task code configured yet.' };
+  if (code !== expected) return { success: false, error: 'That role task code is not correct yet.' };
+
+  const bonus = submittedBonus.trim().toUpperCase();
+  const bonusPoints = bonus && task.bonusCode && bonus === task.bonusCode ? normalizeNumber(task.bonusPoints, 0) : 0;
+  const points = normalizeNumber(task.points, 25) + bonusPoints;
+  const missionKey = String(task.missionId);
+  const role = normalizeRole(task.role);
+  const teamRef = doc(db, 'teams', team.id);
+
+  const result = await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(teamRef);
+    const data = snapshot.data() || {};
+    const alreadyCompleted = Boolean(data.roleProgress?.[missionKey]?.[role]?.completed);
+    if (alreadyCompleted) return { success: false as const, error: 'This role has already completed the task.' };
+
+    transaction.update(teamRef, {
+      score: normalizeNumber(data.score, 0) + points,
+      bonusPoints: normalizeNumber(data.bonusPoints, 0) + bonusPoints,
+      [`roleProgress.${missionKey}.${role}`]: {
+        completed: true,
+        points,
+        codePiece: task.codePiece,
+        completedAt: Timestamp.fromDate(new Date()),
+      },
+    });
+
+    return { success: true as const };
+  });
+
+  if (!result.success) return result;
+
+  await sendAlert({
+    teamId: team.id,
+    message: `${team.name} ${role} task complete for Mission ${task.missionId}.`,
+    type: 'success',
+    timestamp: new Date(),
+    read: false,
+  });
+
+  return { success: true, points };
+}
+
+export async function completeTeamMissionFromRoleProgress(team: Team, mission: Mission, submittedCode: string): Promise<{ success: boolean; error?: string }> {
+  const expectedAnswer = (mission.answerKey || mission.correctAnswer || '').trim().toUpperCase();
+  const submittedAnswer = submittedCode.trim().toUpperCase();
+  if (!submittedAnswer) return { success: false, error: 'Enter the assembled team code.' };
+  if (submittedAnswer !== expectedAnswer) return { success: false, error: 'That assembled team code is not correct.' };
+
+  const missionProgress = team.roleProgress?.[String(mission.id)] || {};
+  const missingRole = TEAM_ROLES.find((role) => !missionProgress[role]?.completed);
+  if (missingRole) return { success: false, error: 'All four role tasks must be complete before the captain can submit.' };
+
+  await completeTeamMission(team, mission);
+  return { success: true };
+}
+
+// Bonus codes
+export async function createBonusCode(bonus: Omit<BonusCode, 'id' | 'createdAt'>): Promise<string> {
+  const bonusesRef = collection(db, 'bonusCodes');
+  const docRef = await addDoc(bonusesRef, {
+    missionId: normalizeNumber(bonus.missionId, 1),
+    code: bonus.code.trim().toUpperCase(),
+    points: normalizeNumber(bonus.points, 0),
+    label: bonus.label?.trim() || '',
+    createdAt: Timestamp.fromDate(new Date()),
+  });
+  return docRef.id;
+}
+
+export function subscribeToBonusCodes(callback: (bonuses: BonusCode[]) => void) {
+  const bonusesRef = collection(db, 'bonusCodes');
+
+  return onSnapshot(bonusesRef, (snapshot) => {
+    const bonuses = snapshot.docs
+      .map(mapBonusCodeDocument)
+      .filter((bonus) => bonus.code)
+      .sort((a, b) => {
+        if (a.missionId !== b.missionId) return a.missionId - b.missionId;
+        return a.code.localeCompare(b.code);
+      });
+    callback(bonuses);
+  }, (error) => {
+    console.error('Bonus code subscription error:', error);
+    callback([]);
+  });
+}
+
+export function subscribeToMissionBonusCodes(missionId: number, callback: (bonuses: BonusCode[]) => void) {
+  const bonusesRef = collection(db, 'bonusCodes');
+  const q = query(bonusesRef, where('missionId', '==', missionId));
+
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map(mapBonusCodeDocument).filter((bonus) => bonus.code));
+  }, (error) => {
+    console.error('Mission bonus code subscription error:', error);
+    callback([]);
+  });
+}
+
+export async function deleteBonusCode(bonusId: string): Promise<void> {
+  const bonusRef = doc(db, 'bonusCodes', bonusId);
+  await deleteDoc(bonusRef);
+}
+
 // Alerts
 export async function sendAlert(alert: Omit<Alert, 'id'>): Promise<string> {
   const alertsRef = collection(db, 'alerts');
@@ -477,91 +708,20 @@ export function subscribeToAlerts(teamId: string, callback: (alerts: Alert[]) =>
   // Subscribe to all alerts and filter client-side for real-time updates
   return onSnapshot(alertsRef, (snapshot) => {
     const alerts = snapshot.docs
-      .map(docData => ({
-        id: docData.id,
-        ...docData.data(),
-        timestamp: docData.data().timestamp?.toDate() || new Date(),
-      }))
+      .map(docData => {
+        const data = docData.data();
+        return {
+          id: docData.id,
+          teamId: typeof data.teamId === 'string' ? data.teamId : null,
+          message: typeof data.message === 'string' ? data.message : '',
+          type: ['info', 'hint', 'warning', 'success'].includes(data.type) ? data.type : 'info',
+          timestamp: normalizeDate(data.timestamp) || new Date(),
+          read: Boolean(data.read),
+        } as Alert;
+      })
       .filter(alert => alert.teamId === teamId || alert.teamId === null)
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()) as Alert[];
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
     callback(alerts);
-  });
-}
-
-export async function requestMissionHint(team: Team, mission: Mission): Promise<{ success: boolean; error?: string }> {
-  const missionKey = String(mission.id);
-  const used = team.hintsUsed?.[missionKey] || 0;
-  const availableHints = mission.hints?.length || (mission.hint ? 1 : 0);
-
-  if (used >= 3 || used >= availableHints) {
-    return { success: false, error: 'No more hints are available for this mission.' };
-  }
-
-  const hintNumber = used + 1;
-  const teamRef = doc(db, 'teams', team.id);
-  const requestsRef = collection(db, 'hintRequests');
-
-  await updateDoc(teamRef, {
-    [`hintsUsed.${missionKey}`]: hintNumber,
-    score: increment(-5),
-  });
-
-  await addDoc(requestsRef, {
-    teamId: team.id,
-    teamName: team.name,
-    missionId: mission.id,
-    missionTitle: mission.title,
-    hintNumber,
-    status: 'pending',
-    createdAt: Timestamp.fromDate(new Date()),
-    sentAt: null,
-  });
-
-  return { success: true };
-}
-
-function mapHintRequestDocument(docData: { id: string; data: () => DocumentData | undefined }): HintRequest {
-  const data = docData.data() || {};
-
-  return {
-    id: docData.id,
-    teamId: typeof data.teamId === 'string' ? data.teamId : '',
-    teamName: typeof data.teamName === 'string' ? data.teamName : 'Unknown Team',
-    missionId: normalizeNumber(data.missionId, 0),
-    missionTitle: typeof data.missionTitle === 'string' ? data.missionTitle : 'Unknown Mission',
-    hintNumber: normalizeNumber(data.hintNumber, 1),
-    status: data.status === 'sent' ? 'sent' : 'pending',
-    createdAt: normalizeDate(data.createdAt) || new Date(),
-    sentAt: normalizeDate(data.sentAt),
-  };
-}
-
-export function subscribeToHintRequests(callback: (requests: HintRequest[]) => void) {
-  const requestsRef = collection(db, 'hintRequests');
-  return onSnapshot(requestsRef, (snapshot) => {
-    const requests = snapshot.docs
-      .map(mapHintRequestDocument)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    callback(requests);
-  }, (error) => {
-    console.error('Hint request subscription error:', error);
-    callback([]);
-  });
-}
-
-export async function fulfillHintRequest(request: HintRequest, hintText: string): Promise<void> {
-  await sendAlert({
-    teamId: request.teamId,
-    message: `Hint ${request.hintNumber} for ${request.missionTitle}: ${hintText}`,
-    type: 'hint',
-    timestamp: new Date(),
-    read: false,
-  });
-
-  const requestRef = doc(db, 'hintRequests', request.id);
-  await updateDoc(requestRef, {
-    status: 'sent',
-    sentAt: Timestamp.fromDate(new Date()),
   });
 }
 
@@ -679,10 +839,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Enrollment is often the first opportunity to show families they are supported. Locate what is actually missing, identify the barriers, and rewrite outreach so it sounds supportive.',
       geniallyUrl: '',
       correctAnswer: 'SUPPORTED',
-      hints: ['Think about what families should feel during enrollment.', 'The emotional takeaway says families need this.', 'The answer is SUPPORTED.'],
-      bonusCodes: [
-        { code: 'DOCS10', points: 10, label: 'Located all enrollment documents' },
-      ],
       points: 100,
       nextMissionId: 2,
     },
@@ -693,10 +849,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Students disengage for reasons we do not always see. Review login patterns, communication attempts, counselor notes, technology barriers, and stressors.',
       geniallyUrl: '',
       correctAnswer: 'RECONNECT',
-      hints: ['The mission is about bringing the student back into school.', 'The support plan should help the student do this.', 'The answer is RECONNECT.'],
-      bonusCodes: [
-        { code: 'LOGIN10', points: 10, label: 'Identified the login pattern' },
-      ],
       points: 100,
       nextMissionId: 3,
     },
@@ -707,10 +859,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Connection changes outcomes. Rebuild the communication timeline, identify missed empathy opportunities, and choose realistic trust-building next steps.',
       geniallyUrl: '',
       correctAnswer: 'CONNECTION',
-      hints: ['The emotional takeaway gives the key idea.', 'This word changes outcomes.', 'The answer is CONNECTION.'],
-      bonusCodes: [
-        { code: 'TRUST10', points: 10, label: 'Rebuilt the communication timeline' },
-      ],
       points: 100,
       nextMissionId: 4,
     },
@@ -721,10 +869,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Small flexibility can change a student future. Reconstruct responsibilities, identify urgent supports, and design flexible learning and communication solutions.',
       geniallyUrl: '',
       correctAnswer: 'FLEXIBILITY',
-      hints: ['The student needs options that fit real life.', 'The emotional takeaway names the key support.', 'The answer is FLEXIBILITY.'],
-      bonusCodes: [
-        { code: 'PLAN10', points: 10, label: 'Created a flexible weekly plan' },
-      ],
       points: 100,
       nextMissionId: 5,
     },
@@ -735,10 +879,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Sometimes students need hope before they need academics. Review credits, identify barriers, and build a graduation recovery timeline.',
       geniallyUrl: '',
       correctAnswer: 'HOPE',
-      hints: ['This comes before academics in the emotional takeaway.', 'It is what the student needs to believe graduation is possible.', 'The answer is HOPE.'],
-      bonusCodes: [
-        { code: 'CREDITS10', points: 10, label: 'Built a credit recovery timeline' },
-      ],
       points: 100,
       nextMissionId: 6,
     },
@@ -749,10 +889,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Attendance problems are often symptoms of larger barriers. Analyze patterns, outside factors, intervention priorities, and support solutions.',
       geniallyUrl: '',
       correctAnswer: 'BARRIERS',
-      hints: ['Attendance is not usually the root problem.', 'The mission asks you to investigate what is underneath.', 'The answer is BARRIERS.'],
-      bonusCodes: [
-        { code: 'PATTERN10', points: 10, label: 'Found the attendance pattern' },
-      ],
       points: 100,
       nextMissionId: 7,
     },
@@ -763,10 +899,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'Student success requires teamwork across every department. Review case files, prioritize interventions, assign support roles, and respond to crisis updates.',
       geniallyUrl: '',
       correctAnswer: 'TEAMWORK',
-      hints: ['This mission brings every department together.', 'The emotional takeaway names what student success requires.', 'The answer is TEAMWORK.'],
-      bonusCodes: [
-        { code: 'ROLES15', points: 15, label: 'Assigned realistic team roles' },
-      ],
       points: 125,
       nextMissionId: 8,
     },
@@ -777,10 +909,6 @@ export async function initializeSampleData(): Promise<void> {
       storyContext: 'The work staff does every day changes lives. Combine prior mission information, complete eligibility checks, and submit final recovery plans.',
       geniallyUrl: '',
       correctAnswer: 'CHANGESLIVES',
-      hints: ['The final emotional takeaway gives the phrase.', 'Use the last two words with no space.', 'The answer is CHANGESLIVES.'],
-      bonusCodes: [
-        { code: 'APPROVED20', points: 20, label: 'Completed final graduation approvals' },
-      ],
       points: 150,
       nextMissionId: null,
     },
@@ -790,11 +918,24 @@ export async function initializeSampleData(): Promise<void> {
     await createMission(mission);
   }
 
+  const sampleBonusCodes = [
+    { missionId: 1, code: 'DOCS10', points: 10, label: 'Located all enrollment documents' },
+    { missionId: 2, code: 'LOGIN10', points: 10, label: 'Identified the login pattern' },
+    { missionId: 3, code: 'TRUST10', points: 10, label: 'Rebuilt the communication timeline' },
+    { missionId: 4, code: 'PLAN10', points: 10, label: 'Created a flexible weekly plan' },
+    { missionId: 5, code: 'CREDITS10', points: 10, label: 'Built a credit recovery timeline' },
+    { missionId: 6, code: 'PATTERN10', points: 10, label: 'Found the attendance pattern' },
+    { missionId: 7, code: 'ROLES15', points: 15, label: 'Assigned realistic team roles' },
+    { missionId: 8, code: 'APPROVED20', points: 20, label: 'Completed final graduation approvals' },
+  ];
+
+  await Promise.all(sampleBonusCodes.map(createBonusCode));
+
   // Create sample teams
   const sampleTeams = [
-    { name: 'Team Alpha', code: 'TEAM1', captainName: 'Alpha Leader', members: ['Member 1', 'Member 2'], color: '#00d4ff' },
-    { name: 'Team Beta', code: 'TEAM2', captainName: 'Beta Leader', members: ['Member 1', 'Member 2'], color: '#ffb800' },
-    { name: 'Team Gamma', code: 'TEAM3', captainName: 'Gamma Leader', members: ['Member 1', 'Member 2'], color: '#00ff88' },
+    { name: 'Team Alpha', code: 'TEAM1', captainName: 'Alpha Leader', color: '#00d4ff' },
+    { name: 'Team Beta', code: 'TEAM2', captainName: 'Beta Leader', color: '#ffb800' },
+    { name: 'Team Gamma', code: 'TEAM3', captainName: 'Gamma Leader', color: '#00ff88' },
   ];
 
   for (const team of sampleTeams) {
@@ -804,7 +945,7 @@ export async function initializeSampleData(): Promise<void> {
         name: team.name,
         code: team.code,
         captainName: team.captainName,
-        members: team.members,
+        members: TEAM_ROLES.map((role) => ({ role, name: ROLE_LABELS[role] })),
         color: team.color,
         currentMission: 1,
         completedMissions: [],

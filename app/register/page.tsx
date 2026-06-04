@@ -4,10 +4,11 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useState } from 'react';
-import { ArrowLeft, CheckCircle2, ClipboardCopy, Loader2, Plus, UserRoundX, Users } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ClipboardCopy, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
 import { registerTeam } from '@/lib/firebase-utils';
+import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,22 +26,15 @@ export default function RegisterPage() {
   const { login } = useTeam();
   const [teamName, setTeamName] = useState('');
   const [captainName, setCaptainName] = useState('');
-  const [members, setMembers] = useState<string[]>(['']);
+  const [members, setMembers] = useState<Record<string, string>>({
+    investigator: '',
+    analyst: '',
+    communicator: '',
+    pathfinder: '',
+  });
   const [selectedColor, setSelectedColor] = useState('#3b4f5f');
   const [isLoading, setIsLoading] = useState(false);
   const [generatedCode, setGeneratedCode] = useState('');
-
-  const addMember = () => {
-    if (members.length < 8) setMembers([...members, '']);
-  };
-
-  const removeMember = (index: number) => {
-    setMembers(members.filter((_, itemIndex) => itemIndex !== index));
-  };
-
-  const updateMember = (index: number, value: string) => {
-    setMembers(members.map((member, itemIndex) => (itemIndex === index ? value : member)));
-  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -52,8 +46,11 @@ export default function RegisterPage() {
 
     setIsLoading(true);
     try {
-      const filteredMembers = members.map((member) => member.trim()).filter(Boolean);
-      const result = await registerTeam(teamName.trim(), captainName.trim(), filteredMembers, selectedColor);
+      const roleMembers = TEAM_ROLES.map((role) => ({
+        role,
+        name: members[role].trim() || ROLE_LABELS[role],
+      }));
+      const result = await registerTeam(teamName.trim(), captainName.trim(), roleMembers, selectedColor);
       setGeneratedCode(result.teamCode);
       toast.success('Staff team registered.');
     } catch (error) {
@@ -86,7 +83,7 @@ export default function RegisterPage() {
       <main className="min-h-screen bg-[#edf2f5] px-4 py-8">
         <div className="mx-auto max-w-xl rounded-md border border-[#c8d2d9] bg-white shadow-[0_18px_55px_rgba(59,79,95,0.14)]">
           <div className="border-b border-[#d9e1e6] bg-[#f8fafb] p-6 text-center">
-            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={250} height={79} className="mx-auto" />
+            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={250} height={79} className="mx-auto h-auto w-48 sm:w-[250px]" />
             <CheckCircle2 className="mx-auto mt-6 h-12 w-12 text-[#5ba300]" />
             <h1 className="mt-3 text-2xl font-semibold text-[#26333d]">Team Registration Complete</h1>
             <p className="mt-1 text-sm text-[#54616b]">Share this code with your team. It is their Mission Control login.</p>
@@ -95,7 +92,7 @@ export default function RegisterPage() {
           <div className="space-y-6 p-6">
             <div className="rounded-md border border-[#d6e0e6] bg-[#f8fafb] p-5 text-center">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#54616b]">Team Access Code</p>
-              <div className="mt-2 font-mono text-5xl font-bold tracking-[0.24em]" style={{ color: selectedColor }}>
+              <div className="mt-2 break-all font-mono text-4xl font-bold sm:text-5xl" style={{ color: selectedColor }}>
                 {generatedCode}
               </div>
               <Button type="button" variant="outline" className="mt-4 border-[#b7c3cb]" onClick={copyCode}>
@@ -124,11 +121,11 @@ export default function RegisterPage() {
 
         <div className="rounded-md border border-[#c8d2d9] bg-white shadow-[0_18px_55px_rgba(59,79,95,0.14)]">
           <div className="grid gap-6 border-b border-[#d9e1e6] bg-[#f8fafb] p-6 md:grid-cols-[auto_1fr] md:items-center">
-            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={220} height={70} />
+            <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={220} height={70} className="h-auto w-48 sm:w-[220px]" />
             <div>
               <h1 className="text-2xl font-semibold text-[#26333d]">Staff Team Registration</h1>
               <p className="mt-1 text-sm text-[#54616b]">
-                Create one team code for your group. Teams begin at Mission 1 with 0 points.
+                Create one team code and assign one person to each required role.
               </p>
             </div>
           </div>
@@ -151,24 +148,19 @@ export default function RegisterPage() {
                   <Users className="h-4 w-4 text-[#3b4f5f]" />
                   Team Members
                 </Label>
-                <span className="text-xs text-[#54616b]">Optional, up to 8</span>
+                <span className="text-xs text-[#54616b]">4 required roles</span>
               </div>
               <div className="grid gap-2">
-                {members.map((member, index) => (
-                  <div key={index} className="flex gap-2">
-                    <Input value={member} onChange={(event) => updateMember(index, event.target.value)} placeholder={`Member ${index + 1}`} disabled={isLoading} />
-                    {members.length > 1 && (
-                      <Button type="button" variant="ghost" size="icon" onClick={() => removeMember(index)} disabled={isLoading} aria-label="Remove member">
-                        <UserRoundX className="h-4 w-4" />
-                      </Button>
-                    )}
+                {TEAM_ROLES.map((role) => (
+                  <div key={role} className="grid gap-2 rounded border border-[#d6e0e6] bg-[#f8fafb] p-3 sm:grid-cols-[150px_1fr] sm:items-center">
+                    <div>
+                      <p className="text-sm font-semibold text-[#26333d]">{ROLE_LABELS[role]}</p>
+                      <p className="text-xs text-[#54616b]">Role task access</p>
+                    </div>
+                    <Input value={members[role]} onChange={(event) => setMembers({ ...members, [role]: event.target.value })} placeholder={`${ROLE_LABELS[role]} name`} disabled={isLoading} />
                   </div>
                 ))}
               </div>
-              <Button type="button" variant="outline" className="border-[#b7c3cb]" onClick={addMember} disabled={members.length >= 8 || isLoading}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Member
-              </Button>
             </div>
 
             <div className="space-y-3">

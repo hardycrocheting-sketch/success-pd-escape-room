@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, KeyRound, Loader2, LockKeyhole, RadioTower, ShieldCheck } from 'lucide-react';
 import { useTeam } from '@/lib/team-context';
+import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
+import type { TeamRole } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +16,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { login } = useTeam();
   const [teamCode, setTeamCode] = useState('');
+  const [role, setRole] = useState<TeamRole | 'captain'>('captain');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -28,7 +31,7 @@ export default function LoginPage() {
 
     setIsLoading(true);
     setError('');
-    const result = await login(code);
+    const result = await login(code, role);
 
     if (result.success) {
       router.push('/dashboard');
@@ -44,8 +47,8 @@ export default function LoginPage() {
       <div className="grid min-h-screen lg:grid-cols-[0.95fr_1.05fr]">
         <section className="ps-shell broken-panel flex min-h-[42vh] flex-col justify-between px-6 py-7 text-white lg:min-h-screen lg:px-10">
           <div className="flex items-center justify-between gap-4">
-            <div className="rounded bg-white px-4 py-3 shadow-sm">
-              <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={260} height={82} priority />
+            <div className="rounded bg-white px-3 py-2 shadow-sm sm:px-4 sm:py-3">
+              <Image src="/success-logo.png" alt="SUCCESS Virtual Learning Centers of Michigan" width={260} height={82} priority className="h-auto w-44 sm:w-[260px]" />
             </div>
             <div className="hidden rounded border border-white/20 bg-white/10 px-3 py-2 font-mono text-xs uppercase tracking-[0.18em] text-yellow-100 sm:block">
               GRI CASE FILES
@@ -57,7 +60,7 @@ export default function LoginPage() {
               <AlertTriangle className="h-4 w-4" />
               Graduation Recovery Initiative
             </div>
-            <h1 className="text-4xl font-bold tracking-tight md:text-6xl">
+            <h1 className="text-3xl font-bold md:text-6xl">
               Find Your Way through real student-success missions.
             </h1>
             <p className="mt-5 max-w-xl text-base leading-7 text-slate-100">
@@ -109,6 +112,14 @@ export default function LoginPage() {
                   />
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="role">Your Role</Label>
+                <select id="role" className="h-12 w-full rounded-md border border-input bg-background px-3 text-sm" value={role} onChange={(event) => setRole(event.target.value as TeamRole | 'captain')} disabled={isLoading}>
+                  <option value="captain">Captain / Team Code Submitter</option>
+                  {TEAM_ROLES.map((item) => <option key={item} value={item}>{ROLE_LABELS[item]}</option>)}
+                </select>
               </div>
 
               <Button type="submit" className="h-12 w-full bg-[#3b4f5f] text-base hover:bg-[#304250]" disabled={isLoading}>

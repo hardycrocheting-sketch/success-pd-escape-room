@@ -8,25 +8,29 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Bell, CheckCircle2, Database, Loader2, Lock, Plus, RadioTower, RefreshCw, Send, Trash2, Trophy } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  createBonusCode,
   createMission,
   createTeam,
+  deleteBonusCode,
   deleteMission,
   deleteScheduledAlert,
   awardTeamBonus,
-  fulfillHintRequest,
   getAllMissions,
   initializeSampleData,
   sendAlert,
   createScheduledAlert,
+  subscribeToBonusCodes,
+  subscribeToRoleTasks,
   subscribeToAllTeams,
   subscribeToAppSettings,
-  subscribeToHintRequests,
   subscribeToScheduledAlerts,
   updateMission,
   updateAppSettings,
   resetTeamGame,
+  upsertRoleTask,
 } from '@/lib/firebase-utils';
-import type { Alert, AppSettings, HintRequest, Mission, ScheduledAlert, Team } from '@/lib/types';
+import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
+import type { Alert, AppSettings, BonusCode, Mission, RoleTask, ScheduledAlert, Team, TeamRole } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,19 +46,39 @@ const emptyMission = {
   geniallyUrl: '',
   correctAnswer: '',
   points: 100,
-  bonusCodesText: '',
-  hintsText: '',
   bonusPrompt: '',
   locked: false,
   unlockAt: '',
   nextMissionId: '',
 };
 
+const emptyBonusForm = {
+  missionId: 1,
+  code: '',
+  points: 10,
+  label: '',
+};
+
+const emptyRoleTaskForm = {
+  missionId: 1,
+  role: 'investigator' as TeamRole,
+  title: '',
+  instructions: '',
+  geniallyUrl: '',
+  taskCode: '',
+  codePiece: '',
+  points: 25,
+  hint: '',
+  bonusCode: '',
+  bonusPoints: 0,
+};
+
 export default function AdminPage() {
   const router = useRouter();
   const [teams, setTeams] = useState<Team[]>([]);
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [hintRequests, setHintRequests] = useState<HintRequest[]>([]);
+  const [bonusCodes, setBonusCodes] = useState<BonusCode[]>([]);
+  const [roleTasks, setRoleTasks] = useState<RoleTask[]>([]);
   const [scheduledAlerts, setScheduledAlerts] = useState<ScheduledAlert[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     countdownTarget: new Date('2026-05-29T15:30:00-04:00'),
@@ -64,6 +88,8 @@ export default function AdminPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isInitializing, setIsInitializing] = useState(false);
   const [missionForm, setMissionForm] = useState(emptyMission);
+  const [bonusForm, setBonusForm] = useState(emptyBonusForm);
+  const [roleTaskForm, setRoleTaskForm] = useState(emptyRoleTaskForm);
   const [editingMissionId, setEditingMissionId] = useState<number | null>(null);
   const [alertMessage, setAlertMessage] = useState('');
   const [alertType, setAlertType] = useState<Alert['type']>('info');
@@ -85,7 +111,8 @@ export default function AdminPage() {
       setTeams(updatedTeams.sort((a, b) => b.score - a.score));
       setIsLoading(false);
     });
-    const unsubscribeHints = subscribeToHintRequests(setHintRequests);
+    const unsubscribeBonuses = subscribeToBonusCodes(setBonusCodes);
+    const unsubscribeRoleTasks = subscribeToRoleTasks(setRoleTasks);
     const unsubscribeScheduledAlerts = subscribeToScheduledAlerts(setScheduledAlerts);
     const unsubscribeSettings = subscribeToAppSettings((settings) => {
       setAppSettings(settings);
@@ -95,7 +122,8 @@ export default function AdminPage() {
     loadMissions();
     return () => {
       unsubscribeTeams();
-      unsubscribeHints();
+      unsubscribeBonuses();
+      unsubscribeRoleTasks();
       unsubscribeScheduledAlerts();
       unsubscribeSettings();
     };
@@ -141,8 +169,6 @@ export default function AdminPage() {
       geniallyUrl: mission.geniallyUrl,
       correctAnswer: mission.correctAnswer,
       points: mission.points || 100,
-      bonusCodesText: (mission.bonusCodes || []).map((bonus) => `${bonus.code}, ${bonus.points}${bonus.label ? `, ${bonus.label}` : ''}`).join('\n'),
-      hintsText: (mission.hints || []).join('\n'),
       bonusPrompt: mission.bonusPrompt || '',
       locked: Boolean(mission.locked),
       unlockAt: mission.unlockAt ? new Date(mission.unlockAt.getTime() - mission.unlockAt.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
@@ -164,8 +190,6 @@ export default function AdminPage() {
       geniallyUrl: missionForm.geniallyUrl.trim(),
       correctAnswer: missionForm.correctAnswer.trim().toUpperCase(),
       points: Number(missionForm.points) || 100,
-      bonusCodes: parseBonusCodes(missionForm.bonusCodesText),
-      hints: missionForm.hintsText.split('\n').map((hint) => hint.trim()).filter(Boolean).slice(0, 3),
       bonusPrompt: missionForm.bonusPrompt.trim(),
       locked: missionForm.locked,
       unlockAt: missionForm.unlockAt ? new Date(missionForm.unlockAt) : null,
@@ -181,6 +205,79 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Mission save error:', error);
       toast.error('Mission could not be saved.');
+    }
+  };
+
+  const saveBonusCode = async () => {
+    if (!bonusForm.code.trim()) {
+      toast.error('Enter a bonus code.');
+      return;
+    }
+
+    const points = Number(bonusForm.points);
+    if (!Number.isFinite(points) || points <= 0) {
+      toast.error('Bonus points must be greater than zero.');
+      return;
+    }
+
+    try {
+      await createBonusCode({
+        missionId: Number(bonusForm.missionId),
+        code: bonusForm.code.trim().toUpperCase(),
+        points,
+        label: bonusForm.label.trim(),
+      });
+      setBonusForm({
+        ...emptyBonusForm,
+        missionId: Number(bonusForm.missionId),
+      });
+      toast.success('Bonus code added.');
+    } catch (error) {
+      console.error('Bonus code save error:', error);
+      toast.error('Bonus code could not be saved.');
+    }
+  };
+
+  const editRoleTask = (task: RoleTask) => {
+    setRoleTaskForm({
+      missionId: task.missionId,
+      role: task.role,
+      title: task.title,
+      instructions: task.instructions,
+      geniallyUrl: task.geniallyUrl,
+      taskCode: task.taskCode,
+      codePiece: task.codePiece,
+      points: task.points,
+      hint: task.hint,
+      bonusCode: task.bonusCode,
+      bonusPoints: task.bonusPoints,
+    });
+  };
+
+  const saveRoleTask = async () => {
+    if (!roleTaskForm.taskCode.trim() || !roleTaskForm.codePiece.trim()) {
+      toast.error('Task code and team-code piece are required.');
+      return;
+    }
+
+    try {
+      await upsertRoleTask({
+        missionId: Number(roleTaskForm.missionId),
+        role: roleTaskForm.role,
+        title: roleTaskForm.title.trim(),
+        instructions: roleTaskForm.instructions.trim(),
+        geniallyUrl: roleTaskForm.geniallyUrl.trim(),
+        taskCode: roleTaskForm.taskCode.trim().toUpperCase(),
+        codePiece: roleTaskForm.codePiece.trim().toUpperCase(),
+        points: Number(roleTaskForm.points) || 25,
+        hint: roleTaskForm.hint.trim(),
+        bonusCode: roleTaskForm.bonusCode.trim().toUpperCase(),
+        bonusPoints: Number(roleTaskForm.bonusPoints) || 0,
+      });
+      toast.success(`${ROLE_LABELS[roleTaskForm.role]} task saved.`);
+    } catch (error) {
+      console.error('Role task save error:', error);
+      toast.error('Role task could not be saved.');
     }
   };
 
@@ -225,24 +322,6 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Schedule alert error:', error);
       toast.error('Scheduled alert could not be saved.');
-    }
-  };
-
-  const sendHint = async (request: HintRequest) => {
-    const mission = missions.find((item) => item.id === request.missionId);
-    const hintText = mission?.hints?.[request.hintNumber - 1] || mission?.hint || '';
-
-    if (!hintText) {
-      toast.error('This mission does not have that hint configured.');
-      return;
-    }
-
-    try {
-      await fulfillHintRequest(request, hintText);
-      toast.success(`Hint sent to ${request.teamName}.`);
-    } catch (error) {
-      console.error('Hint send error:', error);
-      toast.error('Hint could not be sent.');
     }
   };
 
@@ -383,9 +462,10 @@ export default function AdminPage() {
 
       <div className="mx-auto max-w-7xl px-4 py-5">
         <Tabs defaultValue="missions" className="space-y-5">
-          <TabsList className="grid h-auto w-full grid-cols-2 bg-white md:grid-cols-6">
+          <TabsList className="grid h-auto w-full grid-cols-2 bg-white md:grid-cols-7">
             <TabsTrigger value="missions">Missions</TabsTrigger>
-            <TabsTrigger value="hints">Hint Queue</TabsTrigger>
+            <TabsTrigger value="roles">Role Tasks</TabsTrigger>
+            <TabsTrigger value="bonuses">Bonuses</TabsTrigger>
             <TabsTrigger value="teams">Teams</TabsTrigger>
             <TabsTrigger value="alerts">Alerts</TabsTrigger>
             <TabsTrigger value="schedule">Schedule</TabsTrigger>
@@ -405,7 +485,7 @@ export default function AdminPage() {
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#54616b]">Mission {mission.id}</p>
                         <h3 className="font-semibold text-[#26333d]">{mission.title}</h3>
-                        <p className="mt-1 text-sm text-[#54616b]">{mission.points || 100} pts | {mission.hints?.length || 0} hints | {mission.bonusCodes?.length || 0} bonus codes</p>
+                        <p className="mt-1 text-sm text-[#54616b]">{mission.points || 100} pts | {bonusCodes.filter((bonus) => bonus.missionId === mission.id).length} bonus codes</p>
                       </div>
                       <div className="flex gap-2">
                         {mission.locked && <Badge className="bg-[#fad714] text-[#26333d] hover:bg-[#fad714]"><Lock className="mr-1 h-3 w-3" />Locked</Badge>}
@@ -425,25 +505,141 @@ export default function AdminPage() {
             </Panel>
           </TabsContent>
 
-          <TabsContent value="hints">
-            <Panel title="Pending Hint Requests">
-              <div className="space-y-3">
-                {hintRequests.length === 0 && <p className="text-sm text-[#54616b]">No hint requests yet.</p>}
-                {hintRequests.map((request) => (
-                  <div key={request.id} className="grid gap-3 rounded border border-[#d6e0e6] bg-[#f8fafb] p-4 md:grid-cols-[1fr_auto] md:items-center">
-                    <div>
-                      <Badge className={request.status === 'sent' ? 'bg-[#5ba300] text-white hover:bg-[#5ba300]' : 'bg-[#ff7a2a] text-white hover:bg-[#ff7a2a]'}>
-                        {request.status}
-                      </Badge>
-                      <h3 className="mt-2 font-semibold text-[#26333d]">{request.teamName}</h3>
-                      <p className="text-sm text-[#54616b]">{request.missionTitle} | Hint {request.hintNumber}</p>
-                    </div>
-                    <Button className="bg-[#3b4f5f] hover:bg-[#304250]" disabled={request.status === 'sent'} onClick={() => sendHint(request)}>
-                      <Send className="mr-2 h-4 w-4" />
-                      Send Hint
-                    </Button>
+          <TabsContent value="roles" className="grid gap-5 lg:grid-cols-[420px_1fr]">
+            <Panel title="Configure Role Task">
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Mission</Label>
+                    <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={roleTaskForm.missionId} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, missionId: Number(event.target.value) })}>
+                      {sortedMissions.map((mission) => <option key={mission.id} value={mission.id}>Mission {mission.id}</option>)}
+                    </select>
                   </div>
-                ))}
+                  <div className="space-y-2">
+                    <Label>Role</Label>
+                    <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={roleTaskForm.role} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, role: event.target.value as TeamRole })}>
+                      {TEAM_ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Task Title</Label>
+                  <Input value={roleTaskForm.title} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, title: event.target.value })} placeholder="Investigator case review" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Instructions</Label>
+                  <Textarea value={roleTaskForm.instructions} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, instructions: event.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Genially URL</Label>
+                  <Input value={roleTaskForm.geniallyUrl} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, geniallyUrl: event.target.value })} placeholder="https://view.genially.com/..." />
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Role Task Code</Label>
+                    <Input value={roleTaskForm.taskCode} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, taskCode: event.target.value.toUpperCase() })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Team Code Piece</Label>
+                    <Input value={roleTaskForm.codePiece} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, codePiece: event.target.value.toUpperCase() })} />
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Points</Label>
+                    <Input type="number" value={roleTaskForm.points} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, points: Number(event.target.value) })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Hint</Label>
+                    <Input value={roleTaskForm.hint} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, hint: event.target.value })} />
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Bonus Code</Label>
+                    <Input value={roleTaskForm.bonusCode} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, bonusCode: event.target.value.toUpperCase() })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bonus Points</Label>
+                    <Input type="number" value={roleTaskForm.bonusPoints} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, bonusPoints: Number(event.target.value) })} />
+                  </div>
+                </div>
+                <Button className="w-full bg-[#3b4f5f] hover:bg-[#304250]" onClick={saveRoleTask}>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Save Role Task
+                </Button>
+              </div>
+            </Panel>
+
+            <Panel title="Role Task Bank">
+              <div className="space-y-3">
+                {roleTasks.length === 0 && <p className="text-sm text-[#54616b]">No role tasks configured yet.</p>}
+                {roleTasks.map((task) => {
+                  const mission = missions.find((item) => item.id === task.missionId);
+                  return (
+                    <div key={task.id} className="grid gap-3 rounded border border-[#d6e0e6] bg-[#f8fafb] p-4 md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <Badge variant="outline" className="border-[#3b4f5f] text-[#3b4f5f]">Mission {task.missionId}</Badge>
+                        <h3 className="mt-2 font-semibold text-[#26333d]">{ROLE_LABELS[task.role]} | {task.title || mission?.title || 'Role task'}</h3>
+                        <p className="text-sm text-[#54616b]">{task.points} pts | code piece {task.codePiece || 'unset'} | bonus {task.bonusPoints || 0} pts</p>
+                      </div>
+                      <Button variant="outline" className="border-[#b7c3cb]" onClick={() => editRoleTask(task)}>Edit</Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+          </TabsContent>
+
+          <TabsContent value="bonuses" className="grid gap-5 lg:grid-cols-[360px_1fr]">
+            <Panel title="Add Bonus Code">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Mission</Label>
+                  <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={bonusForm.missionId} onChange={(event) => setBonusForm({ ...bonusForm, missionId: Number(event.target.value) })}>
+                    {sortedMissions.map((mission) => <option key={mission.id} value={mission.id}>Mission {mission.id}: {mission.title}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Code</Label>
+                  <Input value={bonusForm.code} onChange={(event) => setBonusForm({ ...bonusForm, code: event.target.value.toUpperCase() })} placeholder="DOCS10" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Points</Label>
+                  <Input type="number" min={1} value={bonusForm.points} onChange={(event) => setBonusForm({ ...bonusForm, points: Number(event.target.value) })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Label</Label>
+                  <Input value={bonusForm.label} onChange={(event) => setBonusForm({ ...bonusForm, label: event.target.value })} placeholder="Found all documents" />
+                </div>
+                <Button className="w-full bg-[#3b4f5f] hover:bg-[#304250]" onClick={saveBonusCode}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Bonus
+                </Button>
+              </div>
+            </Panel>
+
+            <Panel title="Bonus Code Bank">
+              <div className="space-y-3">
+                {bonusCodes.length === 0 && <p className="text-sm text-[#54616b]">No bonus codes yet.</p>}
+                {bonusCodes.map((bonus) => {
+                  const mission = missions.find((item) => item.id === bonus.missionId);
+                  return (
+                    <div key={bonus.id} className="grid gap-3 rounded border border-[#d6e0e6] bg-[#f8fafb] p-4 md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <Badge variant="outline" className="border-[#3b4f5f] text-[#3b4f5f]">Mission {bonus.missionId}</Badge>
+                        <h3 className="mt-2 font-mono text-base font-semibold text-[#26333d]">{bonus.code}</h3>
+                        <p className="text-sm text-[#54616b]">{mission?.title || 'Unknown mission'} | {bonus.points} pts{bonus.label ? ` | ${bonus.label}` : ''}</p>
+                      </div>
+                      <Button variant="ghost" size="icon" onClick={async () => {
+                        await deleteBonusCode(bonus.id);
+                        toast.success('Bonus code deleted.');
+                      }} aria-label="Delete bonus code">
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             </Panel>
           </TabsContent>
@@ -668,15 +864,6 @@ function MissionForm({
         </div>
       </div>
       <div className="space-y-2">
-        <Label>Hints, One Per Line</Label>
-        <Textarea value={form.hintsText} onChange={(event) => update('hintsText', event.target.value)} placeholder="Hint 1&#10;Hint 2&#10;Hint 3" />
-      </div>
-      <div className="space-y-2">
-        <Label>Bonus Codes, One Per Line</Label>
-        <Textarea value={form.bonusCodesText} onChange={(event) => update('bonusCodesText', event.target.value)} placeholder="BONUS10, 10, Found all documents&#10;EMPATHY15, 15, Rewrote outreach message" />
-        <p className="text-xs text-[#54616b]">Format: code, points, optional label. Teams enter these on the mission page to claim bonus points.</p>
-      </div>
-      <div className="space-y-2">
         <Label>Bonus Prompt</Label>
         <Textarea value={form.bonusPrompt} onChange={(event) => update('bonusPrompt', event.target.value)} />
       </div>
@@ -703,22 +890,4 @@ function MissionForm({
       </div>
     </div>
   );
-}
-
-function parseBonusCodes(value: string) {
-  return value
-    .split('\n')
-    .map((line) => {
-      const [rawCode, rawPoints, ...labelParts] = line.split(',');
-      const code = rawCode?.trim().toUpperCase();
-      const points = Number(rawPoints?.trim());
-      if (!code || !Number.isFinite(points) || points <= 0) return null;
-
-      return {
-        code,
-        points,
-        label: labelParts.join(',').trim(),
-      };
-    })
-    .filter((bonus): bonus is { code: string; points: number; label: string } => Boolean(bonus));
 }
