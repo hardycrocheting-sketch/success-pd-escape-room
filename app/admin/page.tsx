@@ -43,7 +43,6 @@ const emptyMission = {
   title: '',
   description: '',
   storyContext: '',
-  geniallyUrl: '',
   correctAnswer: '',
   points: 100,
   bonusPrompt: '',
@@ -69,8 +68,10 @@ const emptyRoleTaskForm = {
   codePiece: '',
   points: 25,
   hint: '',
-  bonusCode: '',
-  bonusPoints: 0,
+  bonuses: [
+    { code: '', points: 0, label: '' },
+    { code: '', points: 0, label: '' },
+  ],
 };
 
 export default function AdminPage() {
@@ -166,7 +167,6 @@ export default function AdminPage() {
       title: mission.title,
       description: mission.description,
       storyContext: mission.storyContext,
-      geniallyUrl: mission.geniallyUrl,
       correctAnswer: mission.correctAnswer,
       points: mission.points || 100,
       bonusPrompt: mission.bonusPrompt || '',
@@ -187,7 +187,6 @@ export default function AdminPage() {
       title: missionForm.title.trim(),
       description: missionForm.description.trim(),
       storyContext: missionForm.storyContext.trim(),
-      geniallyUrl: missionForm.geniallyUrl.trim(),
       correctAnswer: missionForm.correctAnswer.trim().toUpperCase(),
       points: Number(missionForm.points) || 100,
       bonusPrompt: missionForm.bonusPrompt.trim(),
@@ -249,8 +248,10 @@ export default function AdminPage() {
       codePiece: task.codePiece,
       points: task.points,
       hint: task.hint,
-      bonusCode: task.bonusCode,
-      bonusPoints: task.bonusPoints,
+      bonuses: [
+        { code: task.bonuses[0]?.code || '', points: task.bonuses[0]?.points || 0, label: task.bonuses[0]?.label || '' },
+        { code: task.bonuses[1]?.code || '', points: task.bonuses[1]?.points || 0, label: task.bonuses[1]?.label || '' },
+      ],
     });
   };
 
@@ -271,8 +272,11 @@ export default function AdminPage() {
         codePiece: roleTaskForm.codePiece.trim().toUpperCase(),
         points: Number(roleTaskForm.points) || 25,
         hint: roleTaskForm.hint.trim(),
-        bonusCode: roleTaskForm.bonusCode.trim().toUpperCase(),
-        bonusPoints: Number(roleTaskForm.bonusPoints) || 0,
+        bonuses: roleTaskForm.bonuses.map((bonus) => ({
+          code: bonus.code.trim().toUpperCase(),
+          points: Number(bonus.points) || 0,
+          label: bonus.label.trim(),
+        })),
       });
       toast.success(`${ROLE_LABELS[roleTaskForm.role]} task saved.`);
     } catch (error) {
@@ -554,15 +558,38 @@ export default function AdminPage() {
                     <Input value={roleTaskForm.hint} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, hint: event.target.value })} />
                   </div>
                 </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Bonus Code</Label>
-                    <Input value={roleTaskForm.bonusCode} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, bonusCode: event.target.value.toUpperCase() })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Bonus Points</Label>
-                    <Input type="number" value={roleTaskForm.bonusPoints} onChange={(event) => setRoleTaskForm({ ...roleTaskForm, bonusPoints: Number(event.target.value) })} />
-                  </div>
+                <div className="grid gap-3">
+                  {roleTaskForm.bonuses.map((bonus, index) => (
+                    <div key={index} className="rounded border border-[#d6e0e6] bg-[#f8fafb] p-3">
+                      <p className="mb-3 text-sm font-semibold text-[#26333d]">Bonus Opportunity {index + 1}</p>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>Code</Label>
+                          <Input value={bonus.code} onChange={(event) => {
+                            const bonuses = [...roleTaskForm.bonuses];
+                            bonuses[index] = { ...bonuses[index], code: event.target.value.toUpperCase() };
+                            setRoleTaskForm({ ...roleTaskForm, bonuses });
+                          }} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Points</Label>
+                          <Input type="number" value={bonus.points} onChange={(event) => {
+                            const bonuses = [...roleTaskForm.bonuses];
+                            bonuses[index] = { ...bonuses[index], points: Number(event.target.value) };
+                            setRoleTaskForm({ ...roleTaskForm, bonuses });
+                          }} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Label</Label>
+                          <Input value={bonus.label} onChange={(event) => {
+                            const bonuses = [...roleTaskForm.bonuses];
+                            bonuses[index] = { ...bonuses[index], label: event.target.value };
+                            setRoleTaskForm({ ...roleTaskForm, bonuses });
+                          }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <Button className="w-full bg-[#3b4f5f] hover:bg-[#304250]" onClick={saveRoleTask}>
                   <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -581,7 +608,7 @@ export default function AdminPage() {
                       <div>
                         <Badge variant="outline" className="border-[#3b4f5f] text-[#3b4f5f]">Mission {task.missionId}</Badge>
                         <h3 className="mt-2 font-semibold text-[#26333d]">{ROLE_LABELS[task.role]} | {task.title || mission?.title || 'Role task'}</h3>
-                        <p className="text-sm text-[#54616b]">{task.points} pts | code piece {task.codePiece || 'unset'} | bonus {task.bonusPoints || 0} pts</p>
+                        <p className="text-sm text-[#54616b]">{task.points} pts | code piece {task.codePiece || 'unset'} | {task.bonuses.length} bonuses</p>
                       </div>
                       <Button variant="outline" className="border-[#b7c3cb]" onClick={() => editRoleTask(task)}>Edit</Button>
                     </div>
@@ -848,10 +875,6 @@ function MissionForm({
       <div className="space-y-2">
         <Label>Story Context</Label>
         <Textarea value={form.storyContext} onChange={(event) => update('storyContext', event.target.value)} />
-      </div>
-      <div className="space-y-2">
-        <Label>Activity URL</Label>
-        <Input value={form.geniallyUrl} onChange={(event) => update('geniallyUrl', event.target.value)} placeholder="https://view.genially.com/..." />
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">

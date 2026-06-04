@@ -109,7 +109,7 @@ export default function DashboardPage() {
   const locked = isMissionLocked(activeMission);
   const activeRoleProgress = team?.roleProgress?.[String(team?.currentMission || 1)] || {};
   const completedRoles = TEAM_ROLES.filter((role) => activeRoleProgress[role]?.completed).length;
-  const rolePath = session?.role && session.role !== 'captain' && activeMission ? `/mission/${activeMission.id}/role/${session.role}` : activeMission ? `/mission/${activeMission.id}` : '/dashboard';
+  const rolePath = session?.role && !session.isCaptain && activeMission ? `/mission/${activeMission.id}/role/${session.role}` : activeMission ? `/mission/${activeMission.id}` : '/dashboard';
   const totalPossibleCompletions = Math.max(teams.length * missions.length, 1);
   const totalCompleted = teams.reduce((sum, entry) => sum + (entry.completedMissions?.length || 0), 0);
   const redevelopmentPercent = Math.min(100, Math.round((totalCompleted / totalPossibleCompletions) * 100));
@@ -248,7 +248,7 @@ export default function DashboardPage() {
                 )}
                 <Link href={activeMission && !locked ? rolePath : '/dashboard'} className={activeMission && !locked ? '' : 'pointer-events-none'}>
                   <Button className="h-12 min-w-44 bg-[#3b4f5f] hover:bg-[#304250]" disabled={!activeMission || locked}>
-                    {session?.role && session.role !== 'captain' ? `Open ${ROLE_LABELS[session.role]} Task` : 'Captain Overview'}
+                    {session?.role && !session.isCaptain ? `Open ${ROLE_LABELS[session.role]} Task` : 'Captain Overview'}
                   </Button>
                 </Link>
               </div>

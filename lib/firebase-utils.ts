@@ -18,7 +18,7 @@ import {
 import type { DocumentData } from 'firebase/firestore';
 import { db } from './firebase';
 import { ROLE_LABELS, TEAM_ROLES } from './types';
-import type { Team, Mission, Alert, ScheduledAlert, AppSettings, BonusCode, RoleProgress, RoleTask, TeamMember, TeamRole } from './types';
+import type { Team, Mission, Alert, ScheduledAlert, AppSettings, BonusCode, RoleBonus, RoleProgress, RoleTask, TeamMember, TeamRole } from './types';
 
 function normalizeNumber(value: unknown, fallback: number): number {
   const numberValue = typeof value === 'number' ? value : Number(value);
@@ -86,6 +86,33 @@ function normalizeMembers(value: unknown): TeamMember[] {
   });
 }
 
+function normalizeRoleBonuses(value: unknown, fallbackCode?: unknown, fallbackPoints?: unknown): RoleBonus[] {
+  const rawBonuses = Array.isArray(value) ? value : [];
+  const bonuses = rawBonuses
+    .slice(0, 2)
+    .reduce<RoleBonus[]>((acc, item) => {
+      if (!item || typeof item !== 'object') return acc;
+      const data = item as Record<string, unknown>;
+      const code = typeof data.code === 'string' ? data.code.trim().toUpperCase() : '';
+      const points = normalizeNumber(data.points, 0);
+      if (!code || points <= 0) return acc;
+      acc.push({
+        code,
+        points,
+        label: typeof data.label === 'string' ? data.label : '',
+      });
+      return acc;
+    }, []);
+
+  const legacyCode = typeof fallbackCode === 'string' ? fallbackCode.trim().toUpperCase() : '';
+  const legacyPoints = normalizeNumber(fallbackPoints, 0);
+  if (bonuses.length === 0 && legacyCode && legacyPoints > 0) {
+    bonuses.push({ code: legacyCode, points: legacyPoints, label: '' });
+  }
+
+  return bonuses;
+}
+
 function normalizeRoleProgress(value: unknown): Record<string, Partial<Record<TeamRole, RoleProgress>>> {
   if (!value || typeof value !== 'object') return {};
 
@@ -125,6 +152,7 @@ function mapTeamDocument(docData: { id: string; data: () => DocumentData | undef
     name: typeof data.name === 'string' ? data.name : 'Unnamed Team',
     code: typeof data.code === 'string' ? data.code : '',
     captainName: typeof data.captainName === 'string' ? data.captainName : undefined,
+    captainRole: data.captainRole ? normalizeRole(data.captainRole) : undefined,
     members: normalizeMembers(data.members),
     color: typeof data.color === 'string' ? data.color : null,
     currentMission: normalizeNumber(data.currentMission, 1),
@@ -157,8 +185,7 @@ function mapRoleTaskDocument(docData: { id: string; data: () => DocumentData | u
     codePiece: typeof data.codePiece === 'string' ? data.codePiece.trim().toUpperCase() : '',
     points: normalizeNumber(data.points, 25),
     hint: typeof data.hint === 'string' ? data.hint : '',
-    bonusCode: typeof data.bonusCode === 'string' ? data.bonusCode.trim().toUpperCase() : '',
-    bonusPoints: normalizeNumber(data.bonusPoints, 0),
+    bonuses: normalizeRoleBonuses(data.bonuses, data.bonusCode, data.bonusPoints),
     createdAt: normalizeDate(data.createdAt) || new Date(),
   };
 }
@@ -172,7 +199,6 @@ function mapMissionDocument(docData: { id: string; data: () => DocumentData | un
     title: typeof data.title === 'string' ? data.title : `Mission ${id}`,
     description: typeof data.description === 'string' ? data.description : '',
     storyContext: typeof data.storyContext === 'string' ? data.storyContext : '',
-    geniallyUrl: typeof data.geniallyUrl === 'string' ? data.geniallyUrl : '',
     correctAnswer: typeof data.correctAnswer === 'string' ? data.correctAnswer : '',
     answerKey: typeof data.answerKey === 'string' ? data.answerKey : undefined,
     points: normalizeNumber(data.points, 100),
@@ -276,6 +302,7 @@ export async function isTeamCodeUnique(code: string): Promise<boolean> {
 export async function registerTeam(
   name: string,
   captainName: string,
+  captainRole: TeamRole,
   members: TeamMember[],
   color: string | null
 ): Promise<{ teamId: string; teamCode: string }> {
@@ -291,6 +318,7 @@ export async function registerTeam(
     name,
     code,
     captainName,
+    captainRole,
     members,
     color,
     currentMission: 1,
@@ -562,8 +590,11 @@ export async function upsertRoleTask(task: Omit<RoleTask, 'id' | 'createdAt'>): 
     codePiece: task.codePiece.trim().toUpperCase(),
     points: normalizeNumber(task.points, 25),
     hint: task.hint.trim(),
-    bonusCode: task.bonusCode.trim().toUpperCase(),
-    bonusPoints: normalizeNumber(task.bonusPoints, 0),
+    bonuses: task.bonuses.slice(0, 2).map((bonus) => ({
+      code: bonus.code.trim().toUpperCase(),
+      points: normalizeNumber(bonus.points, 0),
+      label: bonus.label?.trim() || '',
+    })).filter((bonus) => bonus.code && bonus.points > 0),
     createdAt: Timestamp.fromDate(new Date()),
   }, { merge: true });
 }
@@ -576,7 +607,8 @@ export async function submitRoleTask(team: Team, task: RoleTask, submittedCode: 
   if (code !== expected) return { success: false, error: 'That role task code is not correct yet.' };
 
   const bonus = submittedBonus.trim().toUpperCase();
-  const bonusPoints = bonus && task.bonusCode && bonus === task.bonusCode ? normalizeNumber(task.bonusPoints, 0) : 0;
+  const matchingBonus = bonus ? task.bonuses.find((item) => item.code === bonus) : null;
+  const bonusPoints = matchingBonus ? normalizeNumber(matchingBonus.points, 0) : 0;
   const points = normalizeNumber(task.points, 25) + bonusPoints;
   const missionKey = String(task.missionId);
   const role = normalizeRole(task.role);
@@ -837,7 +869,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'The Enrollment Barrier',
       description: 'Help a 17-year-old transfer student complete enrollment despite missing documents, family stress, and instability.',
       storyContext: 'Enrollment is often the first opportunity to show families they are supported. Locate what is actually missing, identify the barriers, and rewrite outreach so it sounds supportive.',
-      geniallyUrl: '',
       correctAnswer: 'SUPPORTED',
       points: 100,
       nextMissionId: 2,
@@ -847,7 +878,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'The Student Who Stopped Logging In',
       description: 'Investigate why attendance and assignment submissions suddenly dropped.',
       storyContext: 'Students disengage for reasons we do not always see. Review login patterns, communication attempts, counselor notes, technology barriers, and stressors.',
-      geniallyUrl: '',
       correctAnswer: 'RECONNECT',
       points: 100,
       nextMissionId: 3,
@@ -857,7 +887,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'Family Communication Breakdown',
       description: 'Rebuild trust and improve communication with a struggling family.',
       storyContext: 'Connection changes outcomes. Rebuild the communication timeline, identify missed empathy opportunities, and choose realistic trust-building next steps.',
-      geniallyUrl: '',
       correctAnswer: 'CONNECTION',
       points: 100,
       nextMissionId: 4,
@@ -867,7 +896,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'The Student Balancing Parenthood and Graduation',
       description: 'Support a student trying to graduate while parenting and working.',
       storyContext: 'Small flexibility can change a student future. Reconstruct responsibilities, identify urgent supports, and design flexible learning and communication solutions.',
-      geniallyUrl: '',
       correctAnswer: 'FLEXIBILITY',
       points: 100,
       nextMissionId: 5,
@@ -877,7 +905,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'The Student Ready to Give Up',
       description: 'Help a student regain hope when graduation still feels impossible.',
       storyContext: 'Sometimes students need hope before they need academics. Review credits, identify barriers, and build a graduation recovery timeline.',
-      geniallyUrl: '',
       correctAnswer: 'HOPE',
       points: 100,
       nextMissionId: 6,
@@ -887,7 +914,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'Attendance Crisis Response',
       description: 'Help a student with chronic attendance struggles reconnect to school.',
       storyContext: 'Attendance problems are often symptoms of larger barriers. Analyze patterns, outside factors, intervention priorities, and support solutions.',
-      geniallyUrl: '',
       correctAnswer: 'BARRIERS',
       points: 100,
       nextMissionId: 7,
@@ -897,7 +923,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'Graduation Recovery Team Challenge',
       description: 'Bring departments together to support multiple at-risk students before deadlines close.',
       storyContext: 'Student success requires teamwork across every department. Review case files, prioritize interventions, assign support roles, and respond to crisis updates.',
-      geniallyUrl: '',
       correctAnswer: 'TEAMWORK',
       points: 125,
       nextMissionId: 8,
@@ -907,7 +932,6 @@ export async function initializeSampleData(): Promise<void> {
       title: 'Graduation Day Countdown',
       description: 'Complete final graduation approvals before commencement begins.',
       storyContext: 'The work staff does every day changes lives. Combine prior mission information, complete eligibility checks, and submit final recovery plans.',
-      geniallyUrl: '',
       correctAnswer: 'CHANGESLIVES',
       points: 150,
       nextMissionId: null,

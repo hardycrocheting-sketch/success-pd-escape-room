@@ -7,8 +7,9 @@ import { FormEvent, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ClipboardCopy, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
-import { registerTeam } from '@/lib/firebase-utils';
+import { getTeamByCode, registerTeam } from '@/lib/firebase-utils';
 import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
+import type { TeamRole } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +27,7 @@ export default function RegisterPage() {
   const { login } = useTeam();
   const [teamName, setTeamName] = useState('');
   const [captainName, setCaptainName] = useState('');
+  const [captainRole, setCaptainRole] = useState<TeamRole>(TEAM_ROLES[0]);
   const [members, setMembers] = useState<Record<string, string>>({
     investigator: '',
     analyst: '',
@@ -48,9 +50,9 @@ export default function RegisterPage() {
     try {
       const roleMembers = TEAM_ROLES.map((role) => ({
         role,
-        name: members[role].trim() || ROLE_LABELS[role],
+        name: members[role].trim() || (role === captainRole ? captainName.trim() : ROLE_LABELS[role]),
       }));
-      const result = await registerTeam(teamName.trim(), captainName.trim(), roleMembers, selectedColor);
+      const result = await registerTeam(teamName.trim(), captainName.trim(), captainRole, roleMembers, selectedColor);
       setGeneratedCode(result.teamCode);
       toast.success('Staff team registered.');
     } catch (error) {
@@ -68,8 +70,10 @@ export default function RegisterPage() {
 
   const enterMissionControl = async () => {
     setIsLoading(true);
-    const result = await login(generatedCode);
-    if (result.success) {
+    const team = await getTeamByCode(generatedCode);
+    const captain = team?.members?.find((member) => member.role === captainRole);
+    if (team && captain) {
+      login(team, captain.name, captain.role, true);
       router.push('/dashboard');
       return;
     }
@@ -139,6 +143,12 @@ export default function RegisterPage() {
               <div className="space-y-2">
                 <Label htmlFor="captainName">Captain Name</Label>
                 <Input id="captainName" value={captainName} onChange={(event) => setCaptainName(event.target.value)} placeholder="Staff lead" disabled={isLoading} />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="captainRole">Captain Role</Label>
+                <select id="captainRole" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={captainRole} onChange={(event) => setCaptainRole(event.target.value as TeamRole)} disabled={isLoading}>
+                  {TEAM_ROLES.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
+                </select>
               </div>
             </div>
 

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useRef, useState, useEffect, ReactNode } from 'react';
 import type { TeamSession, Team, Alert, TeamRole } from '@/lib/types';
-import { getTeamByCode, subscribeToTeam, subscribeToAlerts } from '@/lib/firebase-utils';
+import { subscribeToTeam, subscribeToAlerts } from '@/lib/firebase-utils';
 
 interface TeamContextType {
   session: TeamSession | null;
@@ -12,7 +12,7 @@ interface TeamContextType {
   isLoading: boolean;
   notificationsAllowed: boolean;
   enableNotifications: () => Promise<{ success: boolean; error?: string }>;
-  login: (code: string, role?: TeamRole | 'captain') => Promise<{ success: boolean; error?: string }>;
+  login: (team: Team, memberName: string, role: TeamRole, isCaptain: boolean) => void;
   logout: () => void;
 }
 
@@ -93,33 +93,19 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     });
   }, [alerts]);
 
-  const login = async (code: string, role?: TeamRole | 'captain'): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    try {
-      const foundTeam = await getTeamByCode(code.toUpperCase());
-      
-      if (!foundTeam) {
-        setIsLoading(false);
-        return { success: false, error: 'Invalid team code. Please try again.' };
-      }
+  const login = (foundTeam: Team, memberName: string, role: TeamRole, isCaptain: boolean) => {
+    const newSession: TeamSession = {
+      teamId: foundTeam.id,
+      teamName: foundTeam.name,
+      teamCode: foundTeam.code,
+      memberName,
+      role,
+      isCaptain,
+    };
 
-      const newSession: TeamSession = {
-        teamId: foundTeam.id,
-        teamName: foundTeam.name,
-        teamCode: foundTeam.code,
-        role,
-      };
-
-      setSession(newSession);
-      setTeam(foundTeam);
-      localStorage.setItem('teamSession', JSON.stringify(newSession));
-      setIsLoading(false);
-      return { success: true };
-    } catch (error) {
-      setIsLoading(false);
-      console.error('Login error:', error);
-      return { success: false, error: 'Connection error. Please try again.' };
-    }
+    setSession(newSession);
+    setTeam(foundTeam);
+    localStorage.setItem('teamSession', JSON.stringify(newSession));
   };
 
   const logout = () => {

@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, KeyRound, Loader2, LockKeyhole, RadioTower, ShieldCheck } from 'lucide-react';
 import { useTeam } from '@/lib/team-context';
-import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
-import type { TeamRole } from '@/lib/types';
+import { ROLE_LABELS } from '@/lib/types';
+import type { Team, TeamMember } from '@/lib/types';
+import { getTeamByCode } from '@/lib/firebase-utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,7 +17,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { login } = useTeam();
   const [teamCode, setTeamCode] = useState('');
-  const [role, setRole] = useState<TeamRole | 'captain'>('captain');
+  const [foundTeam, setFoundTeam] = useState<Team | null>(null);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -31,15 +32,26 @@ export default function LoginPage() {
 
     setIsLoading(true);
     setError('');
-    const result = await login(code, role);
-
-    if (result.success) {
-      router.push('/dashboard');
-      return;
+    try {
+      const team = await getTeamByCode(code);
+      if (!team) {
+        setError('That access code was not recognized.');
+        setFoundTeam(null);
+        return;
+      }
+      setFoundTeam(team);
+    } catch (error) {
+      console.error('Team lookup error:', error);
+      setError('Connection error. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    setError(result.error || 'That access code was not recognized.');
-    setIsLoading(false);
+  const selectMember = (member: TeamMember) => {
+    if (!foundTeam) return;
+    login(foundTeam, member.name, member.role, foundTeam.captainRole === member.role);
+    router.push('/dashboard');
   };
 
   return (
@@ -104,6 +116,7 @@ export default function LoginPage() {
                     onChange={(event) => {
                       setTeamCode(event.target.value.toUpperCase());
                       setError('');
+                      setFoundTeam(null);
                     }}
                     className="h-12 pl-10 text-center font-mono text-lg uppercase tracking-[0.24em]"
                     placeholder="A7K2Q9"
@@ -114,18 +127,29 @@ export default function LoginPage() {
                 {error && <p className="text-sm text-destructive">{error}</p>}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="role">Your Role</Label>
-                <select id="role" className="h-12 w-full rounded-md border border-input bg-background px-3 text-sm" value={role} onChange={(event) => setRole(event.target.value as TeamRole | 'captain')} disabled={isLoading}>
-                  <option value="captain">Captain / Team Code Submitter</option>
-                  {TEAM_ROLES.map((item) => <option key={item} value={item}>{ROLE_LABELS[item]}</option>)}
-                </select>
-              </div>
-
               <Button type="submit" className="h-12 w-full bg-[#3b4f5f] text-base hover:bg-[#304250]" disabled={isLoading}>
                 {isLoading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <ShieldCheck className="mr-2 h-5 w-5" />}
-                Enter Mission Control
+                Find My Team
               </Button>
+
+              {foundTeam && (
+                <div className="space-y-3 rounded border border-[#d6e0e6] bg-[#f8fafb] p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-[#26333d]">{foundTeam.name}</p>
+                    <p className="text-xs text-[#54616b]">Choose your name to continue on this device.</p>
+                  </div>
+                  <div className="grid gap-2">
+                    {(foundTeam.members || []).map((member) => (
+                      <Button key={`${member.role}-${member.name}`} type="button" variant="outline" className="h-auto justify-start border-[#b7c3cb] p-3 text-left" onClick={() => selectMember(member)}>
+                        <span>
+                          <span className="block font-semibold">{member.name}</span>
+                          <span className="block text-xs text-[#54616b]">{ROLE_LABELS[member.role]}{foundTeam.captainRole === member.role ? ' | Captain' : ''}</span>
+                        </span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-3 border-t border-[#e1e7eb] pt-5">
                 <Link href="/register">

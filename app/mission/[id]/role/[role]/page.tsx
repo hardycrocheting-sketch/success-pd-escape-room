@@ -150,7 +150,7 @@ export default function RoleMissionPage() {
                 onChange={(event) => setBonusCode(event.target.value.toUpperCase())}
                 className="h-11 text-center font-mono uppercase"
                 placeholder="BONUS CODE"
-                disabled={completed || isSubmitting || !task?.bonusCode}
+                disabled={completed || isSubmitting || !task?.bonuses.length}
               />
               <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!taskCode.trim() || !task || completed || isSubmitting}>
                 {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}

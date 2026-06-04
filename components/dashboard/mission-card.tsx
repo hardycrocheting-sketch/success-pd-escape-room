@@ -5,7 +5,7 @@ import type { Mission } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Rocket, Lock, CheckCircle2, Loader2, ExternalLink } from 'lucide-react';
+import { Rocket, Lock, CheckCircle2, Loader2 } from 'lucide-react';
 
 interface MissionCardProps {
   mission: Mission | null;
@@ -101,19 +101,6 @@ export function MissionCard({ mission, isLoading, completedMissions }: MissionCa
             </Link>
           </Button>
           
-          {mission.geniallyUrl && mission.geniallyUrl !== 'https://view.genially.com/YOUR_GENIALLY_ID_1' && (
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-12"
-              asChild
-            >
-              <a href={mission.geniallyUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Open in New Tab
-              </a>
-            </Button>
-          )}
         </div>
       </CardContent>
     </Card>

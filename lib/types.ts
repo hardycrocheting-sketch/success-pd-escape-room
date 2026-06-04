@@ -14,6 +14,12 @@ export interface TeamMember {
   role: TeamRole;
 }
 
+export interface RoleBonus {
+  code: string;
+  points: number;
+  label?: string;
+}
+
 export interface RoleProgress {
   completed: boolean;
   points: number;
@@ -26,6 +32,7 @@ export interface Team {
   name: string;
   code: string;
   captainName?: string;
+  captainRole?: TeamRole;
   members?: TeamMember[];
   color?: string | null;
   currentMission: number;
@@ -55,7 +62,6 @@ export interface Mission {
   title: string;
   description: string;
   storyContext: string;
-  geniallyUrl: string;
   correctAnswer: string;
   answerKey?: string; // Alternative to correctAnswer
   points?: number;
@@ -76,8 +82,7 @@ export interface RoleTask {
   codePiece: string;
   points: number;
   hint: string;
-  bonusCode: string;
-  bonusPoints: number;
+  bonuses: RoleBonus[];
   createdAt?: Date;
 }
 
@@ -123,5 +128,7 @@ export interface TeamSession {
   teamId: string;
   teamName: string;
   teamCode: string;
-  role?: TeamRole | 'captain';
+  memberName?: string;
+  role?: TeamRole;
+  isCaptain?: boolean;
 }
