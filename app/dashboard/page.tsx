@@ -108,8 +108,8 @@ export default function DashboardPage() {
 
   const locked = isMissionLocked(activeMission);
   const activeRoleProgress = team?.roleProgress?.[String(team?.currentMission || 1)] || {};
-  const visibleRoles = session?.role ? [session.role] : [];
-  const completedRoles = visibleRoles.filter((role) => activeRoleProgress[role]?.completed).length;
+  const completedRoles = TEAM_ROLES.filter((role) => activeRoleProgress[role]?.completed).length;
+  const personalTaskComplete = Boolean(session?.role && activeRoleProgress[session.role]?.completed);
   const rolePath = session?.role && !session.isCaptain && activeMission ? `/mission/${activeMission.id}/role/${session.role}` : activeMission ? `/mission/${activeMission.id}` : '/dashboard';
   const totalPossibleCompletions = Math.max(teams.length * missions.length, 1);
   const totalCompleted = teams.reduce((sum, entry) => sum + (entry.completedMissions?.length || 0), 0);
@@ -206,9 +206,14 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="Team Score" value={`${team.score} pts`} detail={`${team.bonusPoints || 0} bonus points logged`} />
-            <Metric label="Missions Complete" value={`${team.completedMissions?.length || 0}/${missions.length || 0}`} detail={`${teamCompletionPercent}% team progress`} />
+            <Metric
+              label="My Task"
+              value={personalTaskComplete ? 'Complete' : 'Not Complete'}
+              detail={session?.role ? `${ROLE_LABELS[session.role]} | Mission ${activeMission?.id || team.currentMission}` : 'Role not assigned'}
+            />
+            <Metric label="Team Missions" value={`${team.completedMissions?.length || 0}/${missions.length || 0}`} detail={`${teamCompletionPercent}% team progress`} />
             <Metric label="Elapsed Time" value={formatElapsed(team.elapsedSeconds)} detail="Shown as leaderboard tiebreaker" />
           </div>
 
@@ -227,7 +232,7 @@ export default function DashboardPage() {
                   {activeMission?.description || 'Ask the Game Master to configure this mission in the admin console.'}
                 </p>
                 <div className="mt-4 grid gap-2 sm:grid-cols-4">
-                  {visibleRoles.map((role) => (
+                  {TEAM_ROLES.map((role) => (
                     <div key={role} className="rounded border border-[#d6e0e6] bg-[#f8fafb] p-3">
                       <p className="text-xs font-semibold uppercase text-[#54616b]">{ROLE_LABELS[role]}</p>
                       <p className={`mt-1 text-sm font-semibold ${activeRoleProgress[role]?.completed ? 'text-[#5ba300]' : 'text-[#3b4f5f]'}`}>
@@ -237,7 +242,7 @@ export default function DashboardPage() {
                   ))}
                 </div>
                 <div className="mt-4">
-                  <Progress value={visibleRoles.length ? (completedRoles / visibleRoles.length) * 100 : 0} className="h-3 bg-[#e1e7eb] [&>div]:bg-[#5ba300]" />
+                  <Progress value={(completedRoles / TEAM_ROLES.length) * 100} className="h-3 bg-[#e1e7eb] [&>div]:bg-[#5ba300]" />
                 </div>
               </div>
               <div className="flex flex-col gap-2">
