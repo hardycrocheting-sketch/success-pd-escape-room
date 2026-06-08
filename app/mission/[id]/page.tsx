@@ -6,7 +6,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Loader2, Lock, Send, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
-import { completeTeamMissionFromRoleProgress, getMission, startTeamMission, subscribeToMissionRoleTasks } from '@/lib/firebase-utils';
+import { claimMissionBonusCode, completeTeamMissionFromRoleProgress, getMission, startTeamMission, subscribeToMissionRoleTasks } from '@/lib/firebase-utils';
 import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
 import type { Mission, RoleTask } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +28,7 @@ export default function MissionPage() {
   const [mission, setMission] = useState<Mission | null>(null);
   const [roleTasks, setRoleTasks] = useState<RoleTask[]>([]);
   const [answer, setAnswer] = useState('');
+  const [bonusCode, setBonusCode] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -66,6 +67,26 @@ export default function MissionPage() {
 
     setIsSubmitting(true);
     try {
+      const submittedAnswer = answer.trim().toUpperCase();
+      const expectedAnswer = (mission.answerKey || mission.correctAnswer || '').trim().toUpperCase();
+      if (!allRolesComplete) {
+        toast.error('All four role tasks must be complete before the captain can submit.');
+        return;
+      }
+      if (submittedAnswer !== expectedAnswer) {
+        toast.error('That assembled team code is not correct.');
+        return;
+      }
+
+      if (bonusCode.trim()) {
+        const bonusResult = await claimMissionBonusCode(team, mission, bonusCode);
+        if (!bonusResult.success) {
+          toast.error(bonusResult.error || 'Team bonus code could not be applied.');
+          return;
+        }
+        toast.success(`Team bonus approved: +${bonusResult.points} points.`);
+      }
+
       const result = await completeTeamMissionFromRoleProgress(team, mission, answer);
       if (!result.success) {
         toast.error(result.error || 'Mission could not be completed.');
@@ -157,7 +178,7 @@ export default function MissionPage() {
             </div>
             <div className="space-y-4 p-4">
               <p className="text-sm leading-6 text-[#54616b]">
-                Once all four roles are complete, combine the role code pieces and submit the assembled team code.
+                Once all four roles are complete, submit the assembled team code and optional team bonus code.
               </p>
               <form onSubmit={handleSubmitAnswer} className="space-y-4">
                 <Input
@@ -165,9 +186,16 @@ export default function MissionPage() {
                   onChange={(event) => setAnswer(event.target.value.toUpperCase())}
                   className="h-12 text-center font-mono text-lg uppercase"
                   placeholder="TEAM CODE"
-                  disabled={isSubmitting || isCompleted}
+                  disabled={!allRolesComplete || isSubmitting || isCompleted}
                 />
-                <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!answer.trim() || isSubmitting || !allRolesComplete || isCompleted}>
+                <Input
+                  value={bonusCode}
+                  onChange={(event) => setBonusCode(event.target.value.toUpperCase())}
+                  className="h-12 text-center font-mono text-lg uppercase"
+                  placeholder="TEAM BONUS CODE"
+                  disabled={!allRolesComplete || isSubmitting || isCompleted}
+                />
+                <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!answer.trim() || !allRolesComplete || isSubmitting || isCompleted}>
                   {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                   Submit Team Code
                 </Button>
