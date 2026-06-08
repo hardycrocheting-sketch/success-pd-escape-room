@@ -186,14 +186,14 @@ export default function MissionPage() {
                   onChange={(event) => setAnswer(event.target.value.toUpperCase())}
                   className="h-12 text-center font-mono text-lg uppercase"
                   placeholder="TEAM CODE"
-                  disabled={!allRolesComplete || isSubmitting || isCompleted}
+                  disabled={isSubmitting || isCompleted}
                 />
                 <Input
                   value={bonusCode}
                   onChange={(event) => setBonusCode(event.target.value.toUpperCase())}
                   className="h-12 text-center font-mono text-lg uppercase"
                   placeholder="TEAM BONUS CODE"
-                  disabled={!allRolesComplete || isSubmitting || isCompleted}
+                  disabled={isSubmitting || isCompleted}
                 />
                 <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!answer.trim() || !allRolesComplete || isSubmitting || isCompleted}>
                   {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}

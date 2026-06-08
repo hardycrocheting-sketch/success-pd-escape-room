@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { ElementType, ReactNode } from 'react';
+import type { ElementType, FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -14,16 +14,26 @@ import {
   Gauge,
   KeyRound,
   Lock,
+  Loader2,
   LogOut,
   RadioTower,
+  Send,
   Trophy,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
-import { getAllMissions, subscribeToAllTeams, subscribeToAppSettings } from '@/lib/firebase-utils';
+import {
+  claimMissionBonusCode,
+  completeTeamMissionFromRoleProgress,
+  getAllMissions,
+  subscribeToAllTeams,
+  subscribeToAppSettings,
+} from '@/lib/firebase-utils';
 import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
 import type { Mission, Team } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -59,6 +69,9 @@ export default function DashboardPage() {
   const [countdownTarget, setCountdownTarget] = useState(new Date('2026-05-29T15:30:00-04:00'));
   const [countdownLabel, setCountdownLabel] = useState('Time Remaining');
   const [setupMessage, setSetupMessage] = useState('');
+  const [teamCode, setTeamCode] = useState('');
+  const [teamBonusCode, setTeamBonusCode] = useState('');
+  const [isSubmittingMission, setIsSubmittingMission] = useState(false);
   const notifiedUnlockedMissions = useRef<Set<number>>(new Set());
 
   useEffect(() => {
@@ -110,8 +123,9 @@ export default function DashboardPage() {
   const locked = isMissionLocked(activeMission);
   const activeRoleProgress = team?.roleProgress?.[String(team?.currentMission || 1)] || {};
   const completedRoles = TEAM_ROLES.filter((role) => activeRoleProgress[role]?.completed).length;
+  const allRolesComplete = completedRoles === TEAM_ROLES.length;
   const personalTaskComplete = Boolean(session?.role && activeRoleProgress[session.role]?.completed);
-  const rolePath = session?.role && !session.isCaptain && activeMission ? `/mission/${activeMission.id}/role/${session.role}` : activeMission ? `/mission/${activeMission.id}` : '/dashboard';
+  const rolePath = session?.role && activeMission ? `/mission/${activeMission.id}/role/${session.role}` : '/dashboard';
   const totalPossibleCompletions = Math.max(teams.length * missions.length, 1);
   const totalCompleted = teams.reduce((sum, entry) => sum + (entry.completedMissions?.length || 0), 0);
   const redevelopmentPercent = Math.min(100, Math.round((totalCompleted / totalPossibleCompletions) * 100));
@@ -152,6 +166,45 @@ export default function DashboardPage() {
       });
     }
   }, [activeMission, locked, notificationsAllowed]);
+
+  const handleCaptainSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!session?.isCaptain || !team || !activeMission || !teamCode.trim() || !allRolesComplete) return;
+
+    setIsSubmittingMission(true);
+    try {
+      const submittedAnswer = teamCode.trim().toUpperCase();
+      const expectedAnswer = (activeMission.answerKey || activeMission.correctAnswer || '').trim().toUpperCase();
+      if (submittedAnswer !== expectedAnswer) {
+        toast.error('That assembled team code is not correct.');
+        return;
+      }
+
+      if (teamBonusCode.trim()) {
+        const bonusResult = await claimMissionBonusCode(team, activeMission, teamBonusCode);
+        if (!bonusResult.success) {
+          toast.error(bonusResult.error || 'Team bonus code could not be applied.');
+          return;
+        }
+        toast.success(`Team bonus approved: +${bonusResult.points} points.`);
+      }
+
+      const result = await completeTeamMissionFromRoleProgress(team, activeMission, teamCode);
+      if (!result.success) {
+        toast.error(result.error || 'Mission could not be completed.');
+        return;
+      }
+
+      setTeamCode('');
+      setTeamBonusCode('');
+      toast.success('Mission complete. Team score posted.');
+    } catch (error) {
+      console.error('Dashboard mission submit error:', error);
+      toast.error('Mission progress could not be saved.');
+    } finally {
+      setIsSubmittingMission(false);
+    }
+  };
 
   if (isSessionLoading || !team) {
     return (
@@ -259,7 +312,7 @@ export default function DashboardPage() {
                   <Progress value={(completedRoles / TEAM_ROLES.length) * 100} className="h-3 bg-[#e1e7eb] [&>div]:bg-[#5ba300]" />
                 </div>
               </div>
-              <div className="flex flex-col gap-2">
+              <div className="flex min-w-0 flex-col gap-3 lg:w-72">
                 {locked && (
                   <Badge className="justify-center bg-[#fad714] text-[#26333d] hover:bg-[#fad714]">
                     <Lock className="mr-2 h-4 w-4" />
@@ -267,10 +320,36 @@ export default function DashboardPage() {
                   </Badge>
                 )}
                 <Link href={activeMission && !locked ? rolePath : '/dashboard'} className={activeMission && !locked ? '' : 'pointer-events-none'}>
-                  <Button className="h-12 min-w-44 bg-[#3b4f5f] hover:bg-[#304250]" disabled={!activeMission || locked}>
-                    {session?.role && !session.isCaptain ? `Open ${ROLE_LABELS[session.role]} Task` : 'Captain Overview'}
+                  <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!activeMission || locked || !session?.role}>
+                    {session?.role ? `Open ${ROLE_LABELS[session.role]} Task` : 'Role Not Assigned'}
                   </Button>
                 </Link>
+                {session?.isCaptain && (
+                  <form onSubmit={handleCaptainSubmit} className="space-y-2 border-t border-[#d6e0e6] pt-3">
+                    <Input
+                      value={teamCode}
+                      onChange={(event) => setTeamCode(event.target.value.toUpperCase())}
+                      className="h-11 text-center font-mono uppercase"
+                      placeholder="TEAM CODE"
+                      disabled={isSubmittingMission || locked || !activeMission}
+                    />
+                    <Input
+                      value={teamBonusCode}
+                      onChange={(event) => setTeamBonusCode(event.target.value.toUpperCase())}
+                      className="h-11 text-center font-mono uppercase"
+                      placeholder="TEAM BONUS CODE"
+                      disabled={isSubmittingMission || locked || !activeMission}
+                    />
+                    <Button
+                      className="h-11 w-full bg-[#5ba300] hover:bg-[#4d8a00]"
+                      disabled={!teamCode.trim() || !allRolesComplete || isSubmittingMission || locked || !activeMission}
+                    >
+                      {isSubmittingMission ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                      Submit Mission
+                    </Button>
+                    {!allRolesComplete && <p className="text-center text-xs text-[#54616b]">Submit unlocks after all four roles finish.</p>}
+                  </form>
+                )}
               </div>
             </div>
           </div>

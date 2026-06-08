@@ -79,7 +79,7 @@ export default function RoleMissionPage() {
       }
 
       toast.success(`Role task complete: +${result.points} points.`);
-      router.push(`/mission/${missionId}`);
+      router.push('/dashboard');
     } catch (error) {
       console.error('Role task submit error:', error);
       toast.error('Role task progress could not be saved.');
@@ -104,9 +104,9 @@ export default function RoleMissionPage() {
     <main className="min-h-screen bg-[#edf2f5] text-[#26333d]">
       <header className="border-b border-[#c8d2d9] bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
-          <Link href={session.isCaptain ? `/mission/${mission.id}` : '/dashboard'} className="inline-flex items-center gap-2 text-sm font-semibold text-[#3b4f5f] hover:text-[#ff7a2a]">
+          <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm font-semibold text-[#3b4f5f] hover:text-[#ff7a2a]">
             <ArrowLeft className="h-4 w-4" />
-            {session.isCaptain ? 'Captain Submission' : 'Mission Control'}
+            Mission Control
           </Link>
           <Badge className="bg-[#3b4f5f] text-white hover:bg-[#3b4f5f]">{ROLE_LABELS[role]}</Badge>
         </div>
