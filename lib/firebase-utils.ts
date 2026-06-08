@@ -599,16 +599,17 @@ export async function upsertRoleTask(task: Omit<RoleTask, 'id' | 'createdAt'>): 
   }, { merge: true });
 }
 
-export async function submitRoleTask(team: Team, task: RoleTask, submittedCode: string, submittedBonus = ''): Promise<{ success: boolean; points?: number; error?: string }> {
+export async function submitRoleTask(team: Team, task: RoleTask, submittedCode: string, submittedBonuses: string[] = []): Promise<{ success: boolean; points?: number; error?: string }> {
   const code = submittedCode.trim().toUpperCase();
   const expected = task.taskCode.trim().toUpperCase();
   if (!code) return { success: false, error: 'Enter your role task code.' };
   if (!expected) return { success: false, error: 'This role does not have a task code configured yet.' };
   if (code !== expected) return { success: false, error: 'That role task code is not correct yet.' };
 
-  const bonus = submittedBonus.trim().toUpperCase();
-  const matchingBonus = bonus ? task.bonuses.find((item) => item.code === bonus) : null;
-  const bonusPoints = matchingBonus ? normalizeNumber(matchingBonus.points, 0) : 0;
+  const bonusCodes = [...new Set(submittedBonuses.map((bonus) => bonus.trim().toUpperCase()).filter(Boolean))];
+  const bonusPoints = task.bonuses
+    .filter((bonus) => bonusCodes.includes(bonus.code.trim().toUpperCase()))
+    .reduce((sum, bonus) => sum + normalizeNumber(bonus.points, 0), 0);
   const points = normalizeNumber(task.points, 25) + bonusPoints;
   const missionKey = String(task.missionId);
   const role = normalizeRole(task.role);

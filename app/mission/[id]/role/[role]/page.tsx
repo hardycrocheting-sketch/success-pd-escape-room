@@ -22,7 +22,7 @@ export default function RoleMissionPage() {
   const [mission, setMission] = useState<Mission | null>(null);
   const [task, setTask] = useState<RoleTask | null>(null);
   const [taskCode, setTaskCode] = useState('');
-  const [bonusCode, setBonusCode] = useState('');
+  const [bonusCodes, setBonusCodes] = useState(['', '']);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -31,6 +31,12 @@ export default function RoleMissionPage() {
   useEffect(() => {
     if (!teamLoading && !session) router.push('/');
   }, [router, session, teamLoading]);
+
+  useEffect(() => {
+    if (!teamLoading && session?.role && role !== session.role) {
+      router.replace(`/mission/${missionId}/role/${session.role}`);
+    }
+  }, [missionId, role, router, session, teamLoading]);
 
   useEffect(() => {
     if (!validRole) {
@@ -55,7 +61,7 @@ export default function RoleMissionPage() {
 
     setIsSubmitting(true);
     try {
-      const result = await submitRoleTask(team, task, taskCode, bonusCode);
+      const result = await submitRoleTask(team, task, taskCode, bonusCodes);
       if (!result.success) {
         toast.error(result.error || 'Role task could not be completed.');
         return;
@@ -71,7 +77,7 @@ export default function RoleMissionPage() {
     }
   };
 
-  if (teamLoading || isLoading || !session) {
+  if (teamLoading || isLoading || !session || (session.role && role !== session.role)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#edf2f5]">
         <Loader2 className="h-8 w-8 animate-spin text-[#3b4f5f]" />
@@ -87,9 +93,9 @@ export default function RoleMissionPage() {
     <main className="min-h-screen bg-[#edf2f5] text-[#26333d]">
       <header className="border-b border-[#c8d2d9] bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
-          <Link href={`/mission/${mission.id}`} className="inline-flex items-center gap-2 text-sm font-semibold text-[#3b4f5f] hover:text-[#ff7a2a]">
+          <Link href={session.isCaptain ? `/mission/${mission.id}` : '/dashboard'} className="inline-flex items-center gap-2 text-sm font-semibold text-[#3b4f5f] hover:text-[#ff7a2a]">
             <ArrowLeft className="h-4 w-4" />
-            Captain Overview
+            {session.isCaptain ? 'Captain Submission' : 'Mission Control'}
           </Link>
           <Badge className="bg-[#3b4f5f] text-white hover:bg-[#3b4f5f]">{ROLE_LABELS[role]}</Badge>
         </div>
@@ -145,13 +151,21 @@ export default function RoleMissionPage() {
                 placeholder="ROLE TASK CODE"
                 disabled={completed || isSubmitting}
               />
-              <Input
-                value={bonusCode}
-                onChange={(event) => setBonusCode(event.target.value.toUpperCase())}
-                className="h-11 text-center font-mono uppercase"
-                placeholder="BONUS CODE"
-                disabled={completed || isSubmitting || !task?.bonuses.length}
-              />
+              {[0, 1].map((index) => (
+                <Input
+                  key={index}
+                  value={bonusCodes[index]}
+                  onChange={(event) => {
+                    const nextBonusCodes = [...bonusCodes];
+                    nextBonusCodes[index] = event.target.value.toUpperCase();
+                    setBonusCodes(nextBonusCodes);
+                  }}
+                  className="h-11 text-center font-mono uppercase"
+                  placeholder={`BONUS CODE ${index + 1}`}
+                  disabled={completed || isSubmitting || !task?.bonuses[index]}
+                  aria-label={`Bonus code ${index + 1}`}
+                />
+              ))}
               <Button className="h-12 w-full bg-[#3b4f5f] hover:bg-[#304250]" disabled={!taskCode.trim() || !task || completed || isSubmitting}>
                 {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
                 Complete {ROLE_LABELS[role]} Task

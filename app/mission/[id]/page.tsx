@@ -50,6 +50,7 @@ export default function MissionPage() {
   const locked = missionIsLocked(mission) || Boolean(team && missionId !== team.currentMission && !isCompleted);
   const roleProgress = team?.roleProgress?.[String(missionId)] || {};
   const allRolesComplete = TEAM_ROLES.every((role) => roleProgress[role]?.completed);
+  const visibleRoles = session?.role ? [session.role] : [];
 
   const handleSubmitAnswer = async (event: FormEvent) => {
     event.preventDefault();
@@ -117,7 +118,7 @@ export default function MissionPage() {
           </div>
 
           <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">
-            {TEAM_ROLES.map((role) => {
+            {visibleRoles.map((role) => {
               const progress = roleProgress[role];
               const task = roleTasks.find((item) => item.role === role);
               return (
@@ -129,7 +130,7 @@ export default function MissionPage() {
                     </div>
                     {progress?.completed ? <CheckCircle2 className="h-5 w-5 text-[#5ba300]" /> : <Lock className="h-5 w-5 text-[#ff7a2a]" />}
                   </div>
-                  <p className="mt-3 text-sm text-[#54616b]">{progress?.completed ? `Code piece: ${progress.codePiece || 'posted'}` : 'Waiting for this role to finish.'}</p>
+                  <p className="mt-3 text-sm text-[#54616b]">{progress?.completed ? `Code piece: ${progress.codePiece || 'posted'}` : 'Complete your assigned role task.'}</p>
                   <Link href={`/mission/${mission.id}/role/${role}`}>
                     <Button variant="outline" className="mt-4 w-full border-[#b7c3cb]">
                       Open {ROLE_LABELS[role]}
@@ -141,7 +142,7 @@ export default function MissionPage() {
           </div>
         </section>
 
-        <aside className="space-y-5">
+        {session.isCaptain && <aside className="space-y-5">
           <div className="rounded-md border border-[#c8d2d9] bg-white shadow-sm">
             <div className="border-b border-[#d9e1e6] bg-[#f8fafb] px-4 py-3">
               <h2 className="font-semibold text-[#26333d]">Captain Submission</h2>
@@ -166,7 +167,7 @@ export default function MissionPage() {
               {!allRolesComplete && <p className="text-xs text-[#54616b]">Waiting for all four roles to finish.</p>}
             </div>
           </div>
-        </aside>
+        </aside>}
       </div>
     </main>
   );
