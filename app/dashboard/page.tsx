@@ -25,6 +25,7 @@ import type { Mission, Team } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 function formatRemaining(ms: number) {
   if (ms <= 0) return '00:00:00';
@@ -116,11 +117,24 @@ export default function DashboardPage() {
   const redevelopmentPercent = Math.min(100, Math.round((totalCompleted / totalPossibleCompletions) * 100));
   const teamCompletionPercent = team && missions.length ? Math.round(((team.completedMissions?.length || 0) / missions.length) * 100) : 0;
 
-  const leaderboard = [...teams]
+  const pointsLeaderboard = [...teams]
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if ((a.elapsedSeconds || 0) !== (b.elapsedSeconds || 0)) return (a.elapsedSeconds || Number.MAX_SAFE_INTEGER) - (b.elapsedSeconds || Number.MAX_SAFE_INTEGER);
       return (b.completedMissions?.length || 0) - (a.completedMissions?.length || 0);
+    })
+    .slice(0, 6);
+  const timeLeaderboard = teams
+    .filter((entry) => (entry.elapsedSeconds || 0) > 0)
+    .sort((a, b) => {
+      if ((a.elapsedSeconds || 0) !== (b.elapsedSeconds || 0)) return (a.elapsedSeconds || 0) - (b.elapsedSeconds || 0);
+      return b.score - a.score;
+    })
+    .slice(0, 6);
+  const bonusLeaderboard = [...teams]
+    .sort((a, b) => {
+      if ((b.bonusPoints || 0) !== (a.bonusPoints || 0)) return (b.bonusPoints || 0) - (a.bonusPoints || 0);
+      return b.score - a.score;
     })
     .slice(0, 6);
 
@@ -316,18 +330,35 @@ export default function DashboardPage() {
           </Panel>
 
           <Panel title="Leaderboard" icon={Trophy}>
-            <div className="space-y-2">
-              {leaderboard.map((entry, index) => (
-                <div key={entry.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded border border-[#d6e0e6] bg-[#f8fafb] p-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded bg-[#3b4f5f] text-sm font-bold text-white">{index + 1}</span>
-                  <div>
-                    <p className="text-sm font-semibold text-[#26333d]">{entry.name}</p>
-                    <p className="text-xs text-[#54616b]">{formatElapsed(entry.elapsedSeconds)} | {entry.completedMissions?.length || 0} missions</p>
-                  </div>
-                  <Badge className="bg-[#5ba300] text-white hover:bg-[#5ba300]">{entry.score}</Badge>
-                </div>
-              ))}
-            </div>
+            <Tabs defaultValue="points">
+              <TabsList className="grid h-auto w-full grid-cols-3 bg-[#edf2f5]">
+                <TabsTrigger value="points" className="text-xs">Points</TabsTrigger>
+                <TabsTrigger value="time" className="text-xs">Fastest</TabsTrigger>
+                <TabsTrigger value="bonuses" className="text-xs">Bonuses</TabsTrigger>
+              </TabsList>
+              <TabsContent value="points">
+                <LeaderboardList
+                  teams={pointsLeaderboard}
+                  value={(entry) => `${entry.score} pts`}
+                  detail={(entry) => `${entry.completedMissions?.length || 0} missions | ${formatElapsed(entry.elapsedSeconds)}`}
+                />
+              </TabsContent>
+              <TabsContent value="time">
+                <LeaderboardList
+                  teams={timeLeaderboard}
+                  value={(entry) => formatElapsed(entry.elapsedSeconds)}
+                  detail={(entry) => `${entry.score} pts | ${entry.completedMissions?.length || 0} missions`}
+                  emptyMessage="No team times have been posted yet."
+                />
+              </TabsContent>
+              <TabsContent value="bonuses">
+                <LeaderboardList
+                  teams={bonusLeaderboard}
+                  value={(entry) => `${entry.bonusPoints || 0} pts`}
+                  detail={(entry) => `${entry.score} total points`}
+                />
+              </TabsContent>
+            </Tabs>
           </Panel>
         </aside>
       </div>
@@ -351,6 +382,37 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#54616b]">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-[#3b4f5f]">{value}</p>
       <p className="mt-1 text-xs text-[#54616b]">{detail}</p>
+    </div>
+  );
+}
+
+function LeaderboardList({
+  teams,
+  value,
+  detail,
+  emptyMessage = 'No teams are ranked yet.',
+}: {
+  teams: Team[];
+  value: (team: Team) => string;
+  detail: (team: Team) => string;
+  emptyMessage?: string;
+}) {
+  if (teams.length === 0) {
+    return <p className="py-3 text-sm text-[#54616b]">{emptyMessage}</p>;
+  }
+
+  return (
+    <div className="space-y-2 pt-1">
+      {teams.map((entry, index) => (
+        <div key={entry.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded border border-[#d6e0e6] bg-[#f8fafb] p-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded bg-[#3b4f5f] text-sm font-bold text-white">{index + 1}</span>
+          <div>
+            <p className="text-sm font-semibold text-[#26333d]">{entry.name}</p>
+            <p className="text-xs text-[#54616b]">{detail(entry)}</p>
+          </div>
+          <Badge className="bg-[#5ba300] text-white hover:bg-[#5ba300]">{value(entry)}</Badge>
+        </div>
+      ))}
     </div>
   );
 }
