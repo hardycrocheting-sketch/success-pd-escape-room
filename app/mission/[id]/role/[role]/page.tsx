@@ -6,7 +6,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, HelpCircle, Loader2, ShieldAlert, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTeam } from '@/lib/team-context';
-import { getMission, getRoleTask, submitRoleTask } from '@/lib/firebase-utils';
+import { getMission, getRoleTask, startTeamMission, submitRoleTask } from '@/lib/firebase-utils';
 import { ROLE_LABELS, TEAM_ROLES } from '@/lib/types';
 import type { Mission, RoleTask, TeamRole } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +54,17 @@ export default function RoleMissionPage() {
   }, [missionId, role, validRole]);
 
   const completed = Boolean(team?.roleProgress?.[String(missionId)]?.[role]?.completed);
+
+  useEffect(() => {
+    const assignedRole = session?.role === role;
+    const activeMission = team?.currentMission === missionId;
+    const missionComplete = Boolean(team?.completedMissions?.includes(missionId));
+    if (!team || !mission || !validRole || !assignedRole || !activeMission || missionComplete) return;
+
+    startTeamMission(team, missionId).catch((error) => {
+      console.error('Mission timer start error:', error);
+    });
+  }, [mission, missionId, role, session?.role, team, validRole]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
